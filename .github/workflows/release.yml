@@ -164,29 +164,6 @@ jobs:
           print('已生成 updates.json:', core['version'], list(plugins), list(themes))
           PY
 
-      - name: 提交更新清单到 main
-        run: |
-          set -euo pipefail
-          cp updates.json /tmp/updates.json
-          git fetch origin main
-          git checkout -B main origin/main
-          cp /tmp/updates.json updates.json
-          if git diff --quiet -- updates.json; then
-            echo "更新清单无变化"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add updates.json
-          git commit -m "chore: 更新 latest 发布清单"
-          git push origin main
-
-      - name: 刷新 jsDelivr 清单缓存
-        continue-on-error: true
-        run: |
-          # 仅在使用 jsDelivr 渠道时需要;GitHub raw 会自行过期
-          curl -fsS "https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}@main/updates.json"
-
       - name: 清理历史 Release 与 v* 标签
         env:
           GH_TOKEN: ${{ github.token }}
@@ -229,3 +206,37 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
             updates.json
+
+      - name: 提交更新清单到 main
+        run: |
+          set -euo pipefail
+          cp updates.json /tmp/updates.json
+          git fetch origin main
+          git checkout -B main origin/main
+          cp /tmp/updates.json updates.json
+          if git diff --quiet -- updates.json; then
+            echo "更新清单无变化"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add updates.json
+          git commit -m "chore: 更新 latest 发布清单"
+          # 期间可能有人推了 main,重试几次避免非快进拒绝
+          for attempt in 1 2 3; do
+            if git push origin main; then
+              exit 0
+            fi
+            git fetch origin main
+            if ! git rebase origin/main; then
+              git rebase --abort || true
+              exit 1
+            fi
+          done
+          exit 1
+
+      - name: 刷新 jsDelivr 清单缓存
+        continue-on-error: true
+        run: |
+          # 仅在使用 jsDelivr 渠道时需要;GitHub raw 会自行过期
+          curl -fsS "https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}@main/updates.json"
