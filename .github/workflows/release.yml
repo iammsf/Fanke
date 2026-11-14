@@ -1,41 +1,41 @@
 name: release
 
-# 打 v* 标签即发布:构建博客本体(amd64/arm64)与全部插件安装包,
-# 生成 updates.json 更新清单并提交回 main,同时附到 GitHub Release。
+# 仓库只保留一个 latest Release:每次构建覆盖同名产物,不再打 v1.2.3 标签。
+# 版本号用构建时间戳(如 202611150235),仅用于比较新旧,不作发布名。
 #
-# 发布步骤:
-#   git tag v1.1.0 && git push origin v1.1.0
+# 触发:
+#   - push 到 main 且改动 backend/ 或 frontend-nuxt/
+#   - Actions 页面手动 Run workflow(插件/主题单独发版时用)
 #
 # 注意:仓库 Settings → Actions → General 需允许 Workflow permissions 为
 # "Read and write permissions";若 main 有分支保护,请放行 github-actions[bot]。
 
 on:
   push:
-    tags: ['v*']
-  # 允许在 Actions 页面手动补发(输入版本号,如 v1.0.0)
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'frontend-nuxt/**'
+      - '.github/workflows/release.yml'
   workflow_dispatch:
-    inputs:
-      version:
-        description: '发布版本号(如 v1.0.0)'
-        required: true
-        default: 'v1.0.0'
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref_name }}
+  group: release-latest
   cancel-in-progress: false
 
 jobs:
   release:
     runs-on: ubuntu-latest
-    env:
-      VERSION: ${{ inputs.version || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: 计算构建版本号
+        run: echo "VERSION=$(date -u +%Y%m%d%H%M)" >> "$GITHUB_ENV"
 
       - uses: actions/setup-go@v5
         with:
@@ -62,7 +62,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           for arch in amd64 arm64; do
-            staging="dist/fanke-${VERSION}-linux-${arch}"
+            staging="dist/fanke-linux-${arch}"
             mkdir -p "$staging/bin" "$staging/web"
             ( cd backend && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build \
                 -trimpath -buildvcs=false \
@@ -70,7 +70,7 @@ jobs:
                 -o "../${staging}/bin/api" ./cmd/api )
             # 本体只含 bin/api 与前端静态文件,不含 extensions/ 插件目录
             cp -a frontend-nuxt/.output/public/. "$staging/web/"
-            tar -C dist -czf "dist/fanke-${VERSION}-linux-${arch}.tar.gz" "$(basename "$staging")"
+            tar -C dist -czf "dist/fanke-linux-${arch}.tar.gz" "$(basename "$staging")"
             rm -rf "$staging"
           done
 
@@ -106,10 +106,10 @@ jobs:
           import os
           import subprocess
 
-          tag = os.environ['VERSION']
+          version = os.environ['VERSION']
           repo = os.environ['GITHUB_REPOSITORY']
-          base = f'https://github.com/{repo}/releases/download/{tag}'
-          page = f'https://github.com/{repo}/releases/tag/{tag}'
+          base = f'https://github.com/{repo}/releases/latest/download'
+          page = f'https://github.com/{repo}/releases/latest'
           date = subprocess.check_output(['date', '-u', '+%Y-%m-%d']).decode().strip()
 
           def sha256_file(path):
@@ -120,12 +120,12 @@ jobs:
               return h.hexdigest()
 
           archs = ('amd64', 'arm64')
-          urls = {a: f'{base}/fanke-{tag}-linux-{a}.tar.gz' for a in archs}
-          sums = {a: sha256_file(f'dist/fanke-{tag}-linux-{a}.tar.gz') for a in archs}
+          urls = {a: f'{base}/fanke-linux-{a}.tar.gz' for a in archs}
+          sums = {a: sha256_file(f'dist/fanke-linux-{a}.tar.gz') for a in archs}
           core = {
-              'version': tag.lstrip('vV'),
+              'version': version,
               'date': date,
-              'notes': f'发布 {tag}:后端与前端更新,插件目录保持不变。',
+              'notes': f'滚动发布,构建号 {version}。',
               'page_url': page,
               'download_url': urls['amd64'],
               'download_urls': urls,
@@ -178,21 +178,23 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add updates.json
-          git commit -m "chore: 更新 ${VERSION} 发布清单"
+          git commit -m "chore: 更新 latest 发布清单"
           git push origin main
 
       - name: 刷新 jsDelivr 清单缓存
         continue-on-error: true
         run: |
-          # updates.json 走 jsDelivr @main,发版后必须主动清缓存,否则站点仍会读到旧版本
+          # 仅在使用 jsDelivr 渠道时需要;GitHub raw 会自行过期
           curl -fsS "https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}@main/updates.json"
 
-      - name: 创建 GitHub Release
+      - name: 发布 latest
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.VERSION }}
-          name: ${{ env.VERSION }}
-          generate_release_notes: true
+          tag_name: latest
+          name: latest
+          body: |
+            滚动发布,构建号 `${{ env.VERSION }}`。产物名称固定,安装/升级始终取最新一次构建。
+          make_latest: true
           files: |
             dist/*.tar.gz
             dist/*.zip

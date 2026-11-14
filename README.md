@@ -163,14 +163,16 @@ sudo bash deploy/install.sh --update
 
 ### 发布新版本
 
-仓库带有 [release 工作流](.github/workflows/release.yml)，打标签即自动发布：
+仓库只保留一个 `latest` Release，不再打 `v1.2.3` 这类标签。产物文件名固定（`fanke-linux-amd64.tar.gz`、`fanke-linux-arm64.tar.gz`、插件与主题 zip），每次构建覆盖上一次。
 
-```bash
-git tag v1.1.0
-git push origin v1.1.0
-```
+版本号用构建时间戳（UTC，如 `202611150235`），仅用于判断新旧；后台显示的就是这个构建号。
 
-工作流会：构建 linux amd64/arm64 后端与前端 → 打包全部插件 zip（含对应架构的 Go 子进程）→ 生成并提交 `updates.json` → 创建 GitHub Release 并附上产物。
+触发方式：
+
+- push 到 `main` 且改动 `backend/` 或 `frontend-nuxt/` 时自动构建发布
+- 只改插件/主题时不会自动构建，需要到 Actions 页面手动 Run workflow
+
+工作流会：构建 linux amd64/arm64 后端与前端 → 打包全部插件 zip（含对应架构的 Go 子进程）→ 生成并提交 `updates.json` → 覆盖 `latest` Release 产物。
 
 首次使用前请在仓库 Settings → Actions → General 中把 Workflow permissions 设为 **Read and write**；若 `main` 有分支保护，需要放行 `github-actions[bot]` 的推送。
 

@@ -459,7 +459,7 @@ install -d -m 0755 -o "$APP_NAME" -g "$APP_NAME" /var/cache/fanke-thumbs
 # ---------- 编译 ----------
 build_backend() {
   local ver
-  ver="$(git -C "$REPO_ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)"
+  ver="$(date -u +%Y%m%d%H%M)"
   log "编译后端(linux/$ARCH,版本 $ver)..."
   ( cd "$REPO_ROOT/backend" \
     && CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" go build -trimpath -buildvcs=false \
