@@ -56,12 +56,13 @@ const applyUpdate = async () => {
     await api('/admin/update/apply', { method: 'POST' })
     push('升级包已安装，等待服务重启…', true)
   } catch (e: any) {
-    if (e?.status && e.status >= 400) {
+    const status = Number(e?.status || 0)
+    if (status >= 400 && ![502, 503, 504].includes(status)) {
       push(e.message || '升级失败', false)
       applying.value = false
       return
     }
-    // 连接中断多半是服务正在重启,继续等版本变化
+    // 连接中断/网关超时多半是服务正在重启,继续等版本变化
     push('连接中断，升级可能仍在进行，等待服务重启…', true)
   }
   const ok = await waitForRestart(target)

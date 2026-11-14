@@ -42,7 +42,8 @@ func (a *App) CheckCoreUpdate(w http.ResponseWriter, r *http.Request) {
 // 只替换后端二进制与前端静态文件,插件/主题/媒体/数据库不动;完成后进程退出,
 // 由 systemd 拉起新二进制。
 func (a *App) ApplyCoreUpdate(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Minute)
+	// 用后台 context:即使 nginx/浏览器提前断开,下载与替换也要继续完成
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
 	m, err := a.fetchManifest(ctx)
 	if err != nil {
