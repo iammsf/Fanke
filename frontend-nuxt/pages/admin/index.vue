@@ -42,6 +42,11 @@ const checkUpdate = async () => {
   }
 }
 
+const openRelease = () => {
+  const url = coreUpdate.value?.page_url
+  if (url) window.open(url, '_blank', 'noopener')
+}
+
 const loadData = async () => {
   loading.value = true
   loadError.value = null
@@ -162,25 +167,38 @@ useHead({ title: '仪表盘 · fanke 后台' })
           </div>
         </div>
 
-        <div class="panel card">
+        <div class="panel card update-card">
           <h2>版本与更新</h2>
-          <p class="muted" style="margin-top: 0">
-            当前版本:<code>{{ version || '未知' }}</code>
-          </p>
-          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap">
+          <dl class="update-meta">
+            <div>
+              <dt>当前版本</dt>
+              <dd>{{ version || '未知' }}</dd>
+            </div>
+            <div>
+              <dt>最新版本</dt>
+              <dd v-if="coreUpdate">
+                <template v-if="coreUpdate.has_update">
+                  {{ coreUpdate.latest }}<span v-if="coreUpdate.date" class="update-date"> · {{ coreUpdate.date }}</span>
+                </template>
+                <span v-else>已是最新</span>
+              </dd>
+              <dd v-else><span class="update-none">未检查</span></dd>
+            </div>
+          </dl>
+          <div class="update-actions">
             <el-button size="small" :loading="updateBusy" @click="checkUpdate">检查更新</el-button>
-            <a v-if="coreUpdate?.page_url" :href="coreUpdate.page_url" target="_blank" rel="noopener">打开发布页</a>
+            <el-button
+              v-if="coreUpdate?.has_update && coreUpdate.page_url"
+              link
+              type="primary"
+              @click="openRelease"
+            >查看发布页</el-button>
           </div>
-          <template v-if="coreUpdate">
-            <p v-if="coreUpdate.has_update" style="margin: 8px 0 0">
-              最新版本 <b>{{ coreUpdate.latest }}</b>
-              <span v-if="coreUpdate.date" class="muted">({{ coreUpdate.date }})</span>
-            </p>
-            <p v-else style="margin: 8px 0 0">已是最新版本</p>
-            <div v-if="coreUpdate.has_update && coreUpdate.notes" class="update-notes">{{ coreUpdate.notes }}</div>
-            <p v-if="coreUpdate.has_update" class="muted" style="margin: 6px 0 0; font-size: 13px">
-              升级命令:<code>sudo bash deploy/install.sh --update</code>。只更新后端与前端,保留
-              <code>extensions/</code> 插件目录、主题与媒体数据。
+          <template v-if="coreUpdate?.has_update">
+            <p v-if="coreUpdate.notes" class="update-notes">{{ coreUpdate.notes }}</p>
+            <p class="muted update-tip">
+              升级命令 <code>sudo bash deploy/install.sh --update</code>，只更新后端与前端，
+              <code>extensions/</code> 插件目录、主题与媒体数据都会保留。
             </p>
           </template>
         </div>
@@ -221,14 +239,66 @@ useHead({ title: '仪表盘 · fanke 后台' })
   gap: 10px;
   flex-wrap: wrap;
 }
+.update-card h2 {
+  margin-bottom: 16px;
+}
+.update-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 48px;
+  margin: 0 0 16px;
+}
+.update-meta dt {
+  margin: 0 0 3px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.update-meta dd {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+.update-date {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.update-none {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.update-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.update-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
 .update-notes {
-  margin-top: 8px;
-  padding: 8px 10px;
+  margin: 14px 0 0;
+  padding: 10px 12px;
   border-radius: 6px;
   background: var(--el-fill-color-light, #f5f7fa);
   white-space: pre-wrap;
   font-size: 13px;
-  line-height: 1.6;
+  line-height: 1.7;
+  color: var(--text);
+}
+.update-tip {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+.update-tip code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--el-fill-color-light, #f5f7fa);
+  font-size: 12px;
 }
 .account-card {
   display: grid;
