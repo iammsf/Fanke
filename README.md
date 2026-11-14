@@ -48,21 +48,26 @@ fanke/
 git clone <仓库地址> fanke
 cd fanke
 
-# 最简：只给域名，其余全自动
-sudo bash deploy/install.sh --domain blog.example.com
+# 推荐：交互式安装，逐项询问（直接回车用默认值）
+sudo bash deploy/install.sh
 
-# 指定端口与安装目录
-sudo bash deploy/install.sh --domain blog.example.com --port 8081 --dir /opt/fanke
+# 全默认、不询问（适合自动化）
+sudo bash deploy/install.sh --yes
+
+# 非交互：指定域名
+sudo bash deploy/install.sh --domain blog.example.com --yes
 
 # 使用已有 PostgreSQL（跳过本地建库）
-sudo bash deploy/install.sh --domain blog.example.com \
+sudo bash deploy/install.sh --domain blog.example.com --yes \
   --db-url 'postgres://user:pass@127.0.0.1:5432/fanke?sslmode=disable'
 
-# 以后再更新代码：保留数据与配置，重新构建并重启
-sudo bash deploy/install.sh --domain blog.example.com --update
+# 更新代码后升级：保留数据与配置，重新构建并重启
+sudo bash deploy/install.sh --update
 ```
 
-脚本执行完后，浏览器打开 `http://<域名或服务器IP>`，按安装向导创建管理员即可（默认管理员名 `admin`）。
+交互式会依次询问：站点域名、安装目录、后端端口、数据库方式（本地 / 已有连接串）、是否现在创建管理员、是否配置 nginx、是否编译打包插件，最后给出配置摘要并确认。
+
+脚本执行完后，浏览器打开 `http://<域名或服务器IP>`；如果交互时没有创建管理员，会进入安装向导（默认管理员名 `admin`）。
 
 ### 脚本做了什么
 
@@ -82,6 +87,7 @@ sudo bash deploy/install.sh --domain blog.example.com --update
 
 | 参数 | 说明 |
 | --- | --- |
+| `--yes` / `-y` | 非交互模式，直接用参数与默认值安装 |
 | `--domain <域名>` | 站点域名；不填则用 `_`，通过服务器 IP 访问 |
 | `--dir <目录>` | 安装目录，默认 `/opt/fanke` |
 | `--port <端口>` | 后端监听端口，默认 `8081`（只监听 `127.0.0.1`） |
@@ -248,3 +254,11 @@ cd frontend-nuxt && npm run build
 
 **搜索/摘要没有数据**
 首次进入后台后先发布文章；sitemap 与公开列表都直接读数据库。
+
+---
+
+## 许可证
+
+本项目采用 [MIT 许可证](LICENSE)。
+
+Copyright (c) 2026 電腦玩家Stan

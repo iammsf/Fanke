@@ -4,12 +4,13 @@
 # 职责:装依赖 → 建库 → 编译后端/前端/插件 → 生成配置 → systemd → nginx 反代。
 #
 # 用法:
-#   sudo bash deploy/install.sh --domain blog.example.com
-#   sudo bash deploy/install.sh --domain blog.example.com --port 8081 --dir /opt/fanke
-#   sudo bash deploy/install.sh --db-url 'postgres://user:pass@127.0.0.1:5432/fanke?sslmode=disable'
-#   sudo bash deploy/install.sh --update          # 升级:重新构建并重启,保留数据与配置
+#   sudo bash deploy/install.sh                 # 交互式(推荐):逐项询问
+#   sudo bash deploy/install.sh --yes           # 全部用默认值,不询问
+#   sudo bash deploy/install.sh --domain blog.example.com --yes
+#   sudo bash deploy/install.sh --update        # 升级:重新构建并重启,保留数据与配置
 #
 # 选项:
+#   -y, --yes             非交互模式,直接用参数/默认值安装(适合自动化)
 #   --domain <域名>       站点域名;不填则用 _ (用服务器 IP 直接访问)
 #   --dir <目录>          安装目录,默认 /opt/fanke
 #   --port <端口>         后端监听端口,默认 8081(只监听 127.0.0.1,由 nginx 反代)
@@ -24,6 +25,9 @@
 #   --skip-plugins        不编译/打包 extensions 下的自有插件
 #   --update              升级模式(保留配置和数据)
 #   -h, --help            显示帮助
+#
+# 说明:不带任何参数、且直接连接终端运行时进入交互式安装;
+#       已有 /opt/fanke/state/fanke.env 时自动按升级模式继续。
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,13 +50,45 @@ SKIP_PLUGINS=0
 UPDATE=0
 PORT_SET=0
 DB_URL_SET=0
+NO_ARGS=0
+YES=0
+if [ $# -eq 0 ]; then NO_ARGS=1; fi
 
 log()  { printf '\033[36m[fanke]\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m[警告]\033[0m %s\n' "$*"; }
 die()  { printf '\033[31m[错误]\033[0m %s\n' "$*" >&2; exit 1; }
 trap 'printf "\033[31m[错误]\033[0m 第 %s 行执行失败,请把上方输出发回反馈。\n" "$LINENO" >&2' ERR
 
-usage() { sed -n '2,26p' "${BASH_SOURCE[0]}" | sed -e 's/^# \{0,1\}//'; exit 0; }
+usage() {
+  cat <<'EOF'
+fanke 一键部署脚本
+支持 Debian/Ubuntu、RHEL/CentOS/Rocky/Alma/Fedora,自动识别宝塔面板 / 1Panel。
+
+用法:
+  sudo bash deploy/install.sh                 # 交互式(推荐)
+  sudo bash deploy/install.sh --yes           # 全部用默认值,不询问
+  sudo bash deploy/install.sh --domain blog.example.com --yes
+  sudo bash deploy/install.sh --update        # 升级,保留数据与配置
+
+选项:
+  -y, --yes             非交互模式,直接用参数/默认值安装
+  --domain <域名>       站点域名;不填则用服务器 IP 访问
+  --dir <目录>          安装目录,默认 /opt/fanke
+  --port <端口>         后端监听端口,默认 8081(仅 127.0.0.1)
+  --db-url <URL>        使用已有 PostgreSQL,跳过本地建库
+  --db-name <名称>      本地库名,默认 fanke
+  --db-user <用户>      本地库用户,默认 fanke
+  --db-pass <密码>      本地库密码,默认随机生成
+  --admin-user <用户名> 自动创建首个管理员
+  --admin-email <邮箱>
+  --admin-pass <密码>   至少 10 位
+  --skip-nginx          只部署后端与静态文件,不写 nginx 配置
+  --skip-plugins        不编译/打包 extensions 下的自有插件
+  --update              升级模式(保留配置和数据)
+  -h, --help            显示帮助
+EOF
+  exit 0
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -69,10 +105,129 @@ while [ $# -gt 0 ]; do
     --skip-nginx) SKIP_NGINX=1; shift ;;
     --skip-plugins) SKIP_PLUGINS=1; shift ;;
     --update) UPDATE=1; shift ;;
+    -y|--yes|--non-interactive) YES=1; shift ;;
     -h|--help) usage ;;
     *) die "未知参数: $1(用 --help 查看用法)" ;;
   esac
 done
+
+# ---------- 提权 ----------
+if [ "$(id -u)" -ne 0 ]; then
+  command -v sudo >/dev/null 2>&1 || die "请用 root 运行:bash deploy/install.sh"
+  log "需要 root 权限,正在通过 sudo 重新执行..."
+  exec sudo -E bash "$0" "${ORIG_ARGS[@]}"
+fi
+
+# ---------- 交互式安装 ----------
+ask() {
+  local prompt="$1" def="${2:-}" ans
+  if [ -n "$def" ]; then
+    printf '  %s [%s]: ' "$prompt" "$def" >&2
+  else
+    printf '  %s: ' "$prompt" >&2
+  fi
+  IFS= read -r ans || ans=""
+  printf '%s' "${ans:-$def}"
+}
+
+ask_yn() {
+  local prompt="$1" def="$2" ans
+  while :; do
+    printf '  %s [%s]: ' "$prompt" "$def" >&2
+    IFS= read -r ans || ans=""
+    ans="${ans:-$def}"
+    case "$ans" in
+      y|Y|yes|YES|是) return 0 ;;
+      n|N|no|NO|否) return 1 ;;
+      *) printf '    请输入 y 或 n\n' >&2 ;;
+    esac
+  done
+}
+
+ask_secret() {
+  local prompt="$1" p1 p2
+  while :; do
+    printf '  %s: ' "$prompt" >&2
+    IFS= read -rs p1 || p1=""
+    printf '\n' >&2
+    printf '  再输入一次: ' >&2
+    IFS= read -rs p2 || p2=""
+    printf '\n' >&2
+    if [ "${#p1}" -lt 10 ]; then printf '    密码至少 10 位\n' >&2; continue; fi
+    if [ "$p1" != "$p2" ]; then printf '    两次输入不一致\n' >&2; continue; fi
+    printf '%s' "$p1"
+    return 0
+  done
+}
+
+interactive_setup() {
+  local db_choice db_desc admin_desc nginx_desc plugin_desc
+  printf '\n\033[36m=== fanke 交互式安装 ===\033[0m\n\n' >&2
+  DOMAIN="$(ask '站点域名(留空则用服务器 IP 访问)' "$DOMAIN")"
+  APP_DIR="$(ask '安装目录' "$APP_DIR")"
+  PORT="$(ask '后端监听端口(仅本机,由 nginx 反代)' "$PORT")"
+
+  printf '\n数据库:\n  1) 自动安装/使用本机 PostgreSQL(推荐)\n  2) 使用已有 PostgreSQL 连接串\n' >&2
+  db_choice="$(ask '请选择' '1')"
+  if [ "$db_choice" = "2" ]; then
+    while [ -z "$DB_URL" ]; do
+      DB_URL="$(ask 'PostgreSQL 连接串' '')"
+      if [ -z "$DB_URL" ]; then printf '    连接串不能为空\n' >&2; fi
+    done
+    DB_URL_SET=1
+    db_desc="使用已有连接串"
+  else
+    db_desc="本地 PostgreSQL"
+  fi
+
+  if ask_yn '是否现在创建管理员账号?(否则首次打开网页创建)' 'n'; then
+    ADMIN_USER="$(ask '管理员用户名' 'admin')"
+    while :; do
+      ADMIN_EMAIL="$(ask '管理员邮箱' "$ADMIN_EMAIL")"
+      case "$ADMIN_EMAIL" in
+        *@*) break ;;
+        *) printf '    请填写包含 @ 的邮箱\n' >&2 ;;
+      esac
+    done
+    ADMIN_PASS="$(ask_secret '管理员密码(至少 10 位)')"
+    admin_desc="$ADMIN_USER <$ADMIN_EMAIL>"
+  else
+    admin_desc="稍后由网页向导创建"
+  fi
+
+  if ask_yn '是否配置 nginx 反向代理?' 'y'; then
+    SKIP_NGINX=0; nginx_desc="自动配置"
+  else
+    SKIP_NGINX=1; nginx_desc="跳过"
+  fi
+  if ask_yn '是否编译并打包 extensions 下的插件?' 'y'; then
+    SKIP_PLUGINS=0; plugin_desc="编译并打包"
+  else
+    SKIP_PLUGINS=1; plugin_desc="跳过"
+  fi
+
+  printf '\n将按以下配置安装:\n' >&2
+  printf '  域名    : %s\n' "${DOMAIN:-<使用服务器 IP>}" >&2
+  printf '  目录    : %s\n' "$APP_DIR" >&2
+  printf '  端口    : %s\n' "$PORT" >&2
+  printf '  数据库  : %s\n' "$db_desc" >&2
+  printf '  管理员  : %s\n' "$admin_desc" >&2
+  printf '  nginx   : %s\n' "$nginx_desc" >&2
+  printf '  插件    : %s\n\n' "$plugin_desc" >&2
+  if ! ask_yn '确认开始安装?' 'y'; then
+    printf '已取消安装。\n' >&2
+    exit 0
+  fi
+}
+
+if [ "$NO_ARGS" -eq 1 ] && [ "$YES" -eq 0 ] && [ -t 0 ]; then
+  if [ -f "$APP_DIR/state/fanke.env" ]; then
+    UPDATE=1
+    log "检测到已有安装($APP_DIR/state/fanke.env),按升级模式继续,保留配置与数据"
+  else
+    interactive_setup
+  fi
+fi
 
 # ---------- 基础校验 ----------
 [ -f "$REPO_ROOT/backend/go.mod" ] || die "找不到 backend/go.mod,请在仓库根目录内运行 deploy/install.sh"
@@ -110,12 +265,9 @@ if [ -n "$ADMIN_USER" ] || [ -n "$ADMIN_EMAIL" ] || [ -n "$ADMIN_PASS" ]; then
   if [ "${#ADMIN_PASS}" -lt 10 ]; then
     die "管理员密码至少 10 位"
   fi
-fi
-
-if [ "$(id -u)" -ne 0 ]; then
-  command -v sudo >/dev/null 2>&1 || die "请用 root 运行:bash deploy/install.sh"
-  log "需要 root 权限,正在通过 sudo 重新执行..."
-  exec sudo -E bash "$0" "${ORIG_ARGS[@]}"
+  case "$ADMIN_PASS" in
+    *[[:space:]]*) die "管理员密码不能包含空白字符" ;;
+  esac
 fi
 
 CONFIG_FILE="$APP_DIR/state/fanke.env"
