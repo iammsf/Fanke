@@ -201,6 +201,12 @@ const updateExt = async (e: Extension) => {
 
 // AppBadge → el-tag 类型映射
 const badgeType = (k: string) => (({ pub: 'success', draft: 'primary', spam: 'danger', wait: 'warning', st: 'info' }) as Record<string, string>)[k] || 'info'
+// 已检查过的更新结果(排除失败状态)
+const upOf = (slug: string) => {
+  const u = updates.value[slug]
+  return u && u !== 'error' ? u : null
+}
+const upVersion = (slug: string) => upOf(slug)?.version || ''
 
 useHead({ title: '插件 · fanke 后台' })
 </script>
@@ -232,9 +238,9 @@ useHead({ title: '插件 · fanke 后台' })
           <tr>
             <th style="width: 36px"></th>
             <th>插件</th>
-            <th style="width: 90px">版本</th>
-            <th style="width: 110px">状态</th>
-            <th style="width: 320px">操作</th>
+            <th style="width: 160px">版本</th>
+            <th style="width: 100px">状态</th>
+            <th style="width: 340px">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -250,27 +256,33 @@ useHead({ title: '插件 · fanke 后台' })
             <td>
               <NuxtLink :to="`/admin/plugins/${e.slug}`" class="ext-name">{{ e.name }}</NuxtLink>
               <div class="muted" style="font-size: 12.5px">{{ e.description || '—' }}</div>
-              <div v-if="updates[e.slug] && updates[e.slug] !== 'error'" class="muted" style="font-size: 12.5px">
-                <template v-if="(updates[e.slug] as ExtensionUpdateInfo).has_update">
-                  有新版本 {{ (updates[e.slug] as ExtensionUpdateInfo).version }}
-                </template>
-                <template v-else>已是最新</template>
-              </div>
             </td>
-            <td class="muted">v{{ e.version }}</td>
+            <td class="muted ext-version">
+              <span>v{{ e.version }}</span>
+              <el-tag
+                v-if="upOf(e.slug)?.has_update"
+                size="small"
+                type="primary"
+                effect="light"
+                class="ver-tag"
+              >
+                → {{ upVersion(e.slug) }}
+              </el-tag>
+              <el-tag v-else-if="upOf(e.slug)" size="small" type="info" effect="plain" class="ver-tag">已最新</el-tag>
+            </td>
             <td>
               <el-tag v-if="!e.initialized" :type="badgeType('wait')" size="small" effect="light">未初始化</el-tag>
               <el-tag v-else-if="e.enabled" :type="badgeType('pub')" size="small" effect="light">已启用</el-tag>
               <el-tag v-else :type="badgeType('draft')" size="small" effect="light">已禁用</el-tag>
             </td>
             <td>
-              <div style="display: flex; gap: 6px; flex-wrap: wrap">
+              <div class="ext-actions">
                 <el-button size="small" @click="navigateTo(`/admin/plugins/${e.slug}`)">详情</el-button>
                 <el-button v-if="e.update_url" size="small" :disabled="busy[`u:${e.slug}`]" @click="checkUpdate(e)">
                   检查更新
                 </el-button>
                 <el-button
-                  v-if="updates[e.slug] && updates[e.slug] !== 'error' && (updates[e.slug] as ExtensionUpdateInfo).has_update"
+                  v-if="upOf(e.slug)?.has_update"
                   size="small"
                   type="primary"
                   :disabled="busy[`u:${e.slug}`]"
@@ -281,7 +293,7 @@ useHead({ title: '插件 · fanke 后台' })
                 <el-button size="small" :disabled="busy[e.slug] || (!e.initialized && !e.enabled)" @click="toggle(e)">
                   {{ e.enabled ? '禁用' : '启用' }}
                 </el-button>
-                <el-button size="small" type="danger" :disabled="busy[e.slug]" @click="remove(e)">卸载</el-button>
+                <el-button size="small" type="danger" plain :disabled="busy[e.slug]" @click="remove(e)">卸载</el-button>
               </div>
             </td>
           </tr>
@@ -309,7 +321,7 @@ useHead({ title: '插件 · fanke 后台' })
   padding: 10px 8px;
   text-align: left;
   border-bottom: 1px solid var(--border);
-  vertical-align: top;
+  vertical-align: middle;
 }
 .ext-table th {
   font-weight: 600;
@@ -322,6 +334,21 @@ useHead({ title: '插件 · fanke 后台' })
 }
 .ext-name:hover {
   color: var(--primary);
+}
+.ext-version {
+  white-space: nowrap;
+}
+.ver-tag {
+  margin-left: 6px;
+}
+.ext-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+/* Element Plus 会给相邻按钮加 12px 外边距,和 flex gap 叠加后会把操作列挤到换行 */
+.ext-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 .hooks {
   display: flex;
