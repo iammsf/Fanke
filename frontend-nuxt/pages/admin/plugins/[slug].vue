@@ -308,14 +308,9 @@ useHead(() => ({ title: `${ext.value?.name || '插件'} · fanke 后台` }))
             <div><span class="k">作者</span>{{ ext.author }}</div>
             <div><span class="k">发布日期</span>{{ ext.date }}</div>
             <div>
-              <span class="k">主页</span>
+              <span class="k">作者主页</span>
               <a v-if="ext.url" :href="ext.url" target="_blank" rel="noopener">{{ ext.url }}</a>
               <span v-else class="muted">—</span>
-            </div>
-            <div>
-              <span class="k">update_url</span>
-              <span v-if="ext.update_url" class="mono">{{ ext.update_url }}</span>
-              <span v-else class="muted">未配置</span>
             </div>
             <div><span class="k">安装时间</span>{{ fmtDateTime(ext.installed_at) }}</div>
             <div><span class="k">最近变更</span>{{ fmtDateTime(ext.updated_at) }}</div>

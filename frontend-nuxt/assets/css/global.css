@@ -271,6 +271,25 @@ textarea.input {
 
 /* ========== 按钮/表单控件:新控件统一走 Element Plus(el-button / el-input / el-select / el-tag) ========== */
 
+/* 修正按钮内图标与文字的垂直居中:内联 svg 的基线留白会让图标偏上 */
+.el-button {
+  line-height: 1;
+}
+.el-button > span {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+.el-button .el-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.el-button .el-icon svg {
+  display: block;
+  vertical-align: middle;
+}
+
 /* ========== 后台布局面板 ========== */
 .panel {
   padding: 20px 22px;
