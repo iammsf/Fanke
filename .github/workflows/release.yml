@@ -12,6 +12,13 @@ name: release
 on:
   push:
     tags: ['v*']
+  # 允许在 Actions 页面手动补发(输入版本号,如 v1.0.0)
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '发布版本号(如 v1.0.0)'
+        required: true
+        default: 'v1.0.0'
 
 permissions:
   contents: write
@@ -23,6 +30,8 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,8 +58,6 @@ jobs:
           NUXT_TELEMETRY_DISABLED=1 NUXT_PUBLIC_API_BASE=/api/v1 npm run build
 
       - name: 构建后端并打包本体
-        env:
-          VERSION: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           mkdir -p dist
@@ -85,8 +92,6 @@ jobs:
           ls -lh dist
 
       - name: 生成更新清单
-        env:
-          VERSION: ${{ github.ref_name }}
         run: |
           python3 - <<'PY'
           import glob
@@ -146,8 +151,8 @@ jobs:
       - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
+          tag_name: ${{ env.VERSION }}
+          name: ${{ env.VERSION }}
           generate_release_notes: true
           files: |
             dist/*.tar.gz
