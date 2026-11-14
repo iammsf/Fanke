@@ -1,0 +1,9 @@
+{
+  "slug": "material-you",
+  "name": "Material You",
+  "version": "1.0.0",
+  "date": "2026-11-15",
+  "author": "電腦玩家Stan",
+  "description": "Material You (Material 3) 全局主题：文章页与管理页统一紫色调、圆角、填充式控件与柔和阴影。",
+  "targets": ["site", "admin"]
+}

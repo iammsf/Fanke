@@ -1,0 +1,85 @@
+/* Material You — 文章页
+   只覆盖设计令牌与少量组件外观，不改布局结构。 */
+
+:root {
+  --primary: #6750a4;
+  --primary-soft: rgba(103, 80, 164, 0.12);
+  --bg: #fef7ff;
+  --surface: #ffffff;
+  --surface-2: #f3edf7;
+  --text: #1d1b20;
+  --muted: #49454f;
+  --border: #cac4d0;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 24px rgba(103, 80, 164, 0.1);
+  --radius: 24px;
+  --font: "Roboto", "Noto Sans SC", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --el-color-primary: #6750a4;
+  --el-color-primary-light-3: #8a75b8;
+  --el-color-primary-light-5: #a895c9;
+  --el-color-primary-light-7: #cbbfe0;
+  --el-color-primary-light-8: #ddd4ec;
+  --el-color-primary-light-9: #f1ecf8;
+  --el-color-primary-dark-2: #534083;
+  --el-border-radius-base: 12px;
+  --el-border-radius-small: 8px;
+  --el-font-family: var(--font);
+}
+
+[data-theme='dark'] {
+  --primary: #d0bcff;
+  --primary-soft: rgba(208, 188, 255, 0.16);
+  --bg: #141218;
+  --surface: #1d1b20;
+  --surface-2: #2b2930;
+  --text: #e6e0e9;
+  --muted: #cac4d0;
+  --border: #49454f;
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.28);
+
+  --el-color-primary: #d0bcff;
+  --el-color-primary-light-3: #b9a4e8;
+  --el-color-primary-light-5: #9c86cf;
+  --el-color-primary-light-7: #6f5d9e;
+  --el-color-primary-light-8: #554780;
+  --el-color-primary-light-9: #3a2f5e;
+  --el-color-primary-dark-2: #e8dcff;
+}
+
+body {
+  background: var(--bg);
+}
+
+.card,
+.panel {
+  border-radius: var(--radius);
+}
+
+/* 顶部导航做成 M3 的 tonal surface */
+header,
+.app-header {
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.el-button {
+  border-radius: 999px;
+  font-weight: 500;
+}
+
+.el-button--primary {
+  box-shadow: 0 2px 6px rgba(103, 80, 164, 0.28);
+}
+
+.el-input__wrapper,
+.el-textarea__inner {
+  border-radius: 12px;
+}
+
+.el-tag {
+  border-radius: 8px;
+}
+
+.el-card {
+  border-radius: var(--radius);
+}

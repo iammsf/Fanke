@@ -1,0 +1,88 @@
+/* Material You — 管理页
+   通过 Element Plus CSS 变量与组件级覆盖实现，不改后台 DOM。 */
+
+:root {
+  --el-color-primary: #6750a4;
+  --el-color-primary-light-3: #8a75b8;
+  --el-color-primary-light-5: #a895c9;
+  --el-color-primary-light-7: #cbbfe0;
+  --el-color-primary-light-8: #ddd4ec;
+  --el-color-primary-light-9: #f1ecf8;
+  --el-color-primary-dark-2: #534083;
+
+  --el-bg-color: #fef7ff;
+  --el-bg-color-page: #f7f2fa;
+  --el-bg-color-overlay: #ffffff;
+  --el-fill-color: #f3edf7;
+  --el-fill-color-light: #f3edf7;
+  --el-fill-color-lighter: #faf4ff;
+  --el-text-color-primary: #1d1b20;
+  --el-text-color-regular: #49454f;
+  --el-text-color-secondary: #79747e;
+  --el-border-color: #cac4d0;
+  --el-border-color-light: #e7e0ec;
+  --el-border-radius-base: 16px;
+  --el-border-radius-small: 12px;
+  --el-box-shadow-light: 0 4px 16px rgba(103, 80, 164, 0.12);
+  --el-font-family: "Roboto", "Noto Sans SC", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+html.dark {
+  --el-color-primary: #d0bcff;
+  --el-color-primary-light-3: #b9a4e8;
+  --el-color-primary-light-5: #9c86cf;
+  --el-color-primary-light-7: #6f5d9e;
+  --el-color-primary-light-8: #554780;
+  --el-color-primary-light-9: #3a2f5e;
+  --el-color-primary-dark-2: #e8dcff;
+
+  --el-bg-color: #1d1b20;
+  --el-bg-color-page: #141218;
+  --el-bg-color-overlay: #2b2930;
+  --el-fill-color: #2b2930;
+  --el-fill-color-light: #2b2930;
+  --el-fill-color-lighter: #36343b;
+  --el-text-color-primary: #e6e0e9;
+  --el-text-color-regular: #cac4d0;
+  --el-text-color-secondary: #938f99;
+  --el-border-color: #49454f;
+  --el-border-color-light: #3b383e;
+}
+
+body {
+  background: var(--el-bg-color-page);
+}
+
+.panel.card,
+.el-card {
+  border-radius: 24px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(103, 80, 164, 0.08);
+}
+
+.el-button {
+  border-radius: 999px;
+  font-weight: 500;
+}
+
+.el-input__wrapper,
+.el-select__wrapper,
+.el-textarea__inner {
+  border-radius: 12px;
+  box-shadow: none;
+  background: var(--el-fill-color-light);
+}
+
+.el-dialog,
+.el-message-box {
+  border-radius: 28px;
+}
+
+.el-tag {
+  border-radius: 8px;
+}
+
+.el-menu-item,
+.side .menu a,
+.side a {
+  border-radius: 999px;
+}
