@@ -13,10 +13,10 @@ import (
 	"fanke/backend/internal/buildinfo"
 )
 
-// DefaultUpdateManifestURL 更新清单默认地址(GitHub 仓库根目录的 updates.json)。
-// 大陆网络访问 raw.githubusercontent.com 不稳定时,可用 UPDATE_MANIFEST_URL
-// 指向 jsDelivr 镜像等可达地址,内容格式一致。
-const DefaultUpdateManifestURL = "https://raw.githubusercontent.com/iammsf/fanke/main/updates.json"
+// DefaultUpdateManifestURL 更新清单默认地址。
+// 用 jsDelivr 镜像读取仓库根目录的 updates.json:大陆网络通常可直连,
+// 原始地址(GitHub raw)可能超时;两者内容一致,可用 UPDATE_MANIFEST_URL 覆盖。
+const DefaultUpdateManifestURL = "https://cdn.jsdelivr.net/gh/iammsf/fanke@main/updates.json"
 
 const manifestMaxBytes = 1 << 20 // 清单上限 1MB
 

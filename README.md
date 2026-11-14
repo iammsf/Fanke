@@ -136,9 +136,9 @@ sudo bash deploy/install.sh --update
 
 - 后台仪表盘显示当前版本，管理员可点「检查更新」查询博客本体最新版本
 - 插件列表 / 插件详情页有各自的「检查更新」，显示远端版本、更新说明与发布页链接
-- 检查逻辑读取仓库根目录的 [updates.json](updates.json)，默认地址：
-  `https://raw.githubusercontent.com/iammsf/fanke/main/updates.json`
-  大陆网络不稳定时，可在配置中设置 `UPDATE_MANIFEST_URL` 指向 jsDelivr 等镜像
+- 检查逻辑读取仓库根目录的 [updates.json](updates.json)，默认通过 jsDelivr 镜像访问：
+  `https://cdn.jsdelivr.net/gh/iammsf/fanke@main/updates.json`
+  （原始地址 `https://raw.githubusercontent.com/iammsf/fanke/main/updates.json` 在部分网络会超时；两者内容一致，可用 `UPDATE_MANIFEST_URL` 覆盖）
 - 本体升级仍通过部署脚本完成：
 
   ```bash
@@ -179,7 +179,7 @@ git push origin v1.1.0
 | `THUMB_DIR` | 系统临时目录 | 缩略图缓存目录 |
 | `THUMB_ALLOW_HOSTS` | 空 | 允许服务端代抓缩图的外部主机（逗号分隔，防 SSRF） |
 | `REDIS_URL` | 空 | 可选，多实例共享限流计数 |
-| `UPDATE_MANIFEST_URL` | GitHub `updates.json` | 更新清单地址；大陆网络不稳定时可换 jsDelivr 镜像 |
+| `UPDATE_MANIFEST_URL` | jsDelivr 上的 `updates.json` | 更新清单地址；可换成 GitHub raw 或自建镜像 |
 | `INSECURE_COOKIE` | `false` | 纯 HTTP 部署需设为 `true`，否则浏览器不保存登录 Cookie |
 | `BOOTSTRAP_ADMIN_EMAIL/USERNAME/PASSWORD` | 空 / `admin` / 空 | 仅在用户表为空时自动创建管理员 |
 

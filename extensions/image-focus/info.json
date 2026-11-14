@@ -6,7 +6,7 @@
   "date": "2026.10.19",
   "description": "为图片选择展示焦点,在特定裁切场景下重点展示图片的焦点部分。嵌入媒体库,支持 1:1 / 16:9 / 9:16 取景框与中心点标记,缩略图按容器比例自动选用对应焦点坐标。",
   "url": "https://boke.masi.fan",
-  "update_url": "https://raw.githubusercontent.com/iammsf/fanke/main/updates.json",
+  "update_url": "https://cdn.jsdelivr.net/gh/iammsf/fanke@main/updates.json",
   "favico": "favico.svg",
   "request": [
     "store.ensure_table",
