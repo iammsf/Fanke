@@ -275,10 +275,13 @@ textarea.input {
 .el-button {
   line-height: 1;
 }
+/* 修正按钮内文字垂直位置:中文黑体(YaHei/Noto)字形重心偏上,图标本身是居中的,
+   实测 125% 缩放下文字比按钮中心高约 1.5px,这里只下移文字容器,图标不动。 */
 .el-button > span {
   display: inline-flex;
   align-items: center;
   line-height: 1;
+  transform: translateY(1.5px);
 }
 .el-button .el-icon {
   display: inline-flex;
