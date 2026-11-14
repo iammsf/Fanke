@@ -257,18 +257,20 @@ useHead({ title: '插件 · fanke 后台' })
               <NuxtLink :to="`/admin/plugins/${e.slug}`" class="ext-name">{{ e.name }}</NuxtLink>
               <div class="muted" style="font-size: 12.5px">{{ e.description || '—' }}</div>
             </td>
-            <td class="muted ext-version">
-              <span>v{{ e.version }}</span>
-              <el-tag
-                v-if="upOf(e.slug)?.has_update"
-                size="small"
-                type="primary"
-                effect="light"
-                class="ver-tag"
-              >
-                → {{ upVersion(e.slug) }}
-              </el-tag>
-              <el-tag v-else-if="upOf(e.slug)" size="small" type="info" effect="plain" class="ver-tag">已最新</el-tag>
+            <td class="muted">
+              <div class="ext-ver">
+                <span>v{{ e.version }}</span>
+                <el-tag
+                  v-if="upOf(e.slug)?.has_update"
+                  size="small"
+                  type="primary"
+                  effect="light"
+                  class="ver-tag"
+                >
+                  → {{ upVersion(e.slug) }}
+                </el-tag>
+                <el-tag v-else-if="upOf(e.slug)" size="small" type="info" effect="plain" class="ver-tag">已最新</el-tag>
+              </div>
             </td>
             <td>
               <el-tag v-if="!e.initialized" :type="badgeType('wait')" size="small" effect="light">未初始化</el-tag>
@@ -335,11 +337,27 @@ useHead({ title: '插件 · fanke 后台' })
 .ext-name:hover {
   color: var(--primary);
 }
-.ext-version {
+.ext-ver {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   white-space: nowrap;
 }
+.ext-ver > span {
+  line-height: 1;
+}
 .ver-tag {
-  margin-left: 6px;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  margin: 0;
+  padding: 0 6px;
+}
+/* 标签里的文字也一样强制垂直居中,不依赖 EP 的 line-height */
+.ver-tag :deep(.el-tag__content) {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
 }
 .ext-actions {
   display: flex;

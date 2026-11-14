@@ -34,12 +34,12 @@ const (
 )
 
 // ThumbWidths 标准宽度档位(前端 srcset 与正文图注入共用同一组,避免档位漂移)。
-var ThumbWidths = []int{480, 740, 1080}
+var ThumbWidths = []int{480, 740, 1080, 1440}
 
 // thumbWidthBuckets 允许生成缓存的宽度档位。
 // 请求宽度一律向上吸附到最近档位:否则 w=33/34/35… 每个值都会落一个缓存文件,
 // 一张图就能撑出上千个 WebP,既耗磁盘也耗 CPU。
-var thumbWidthBuckets = []int{120, 160, 240, 320, 480, 640, 740, 960, 1080, 1280, 1600, 1920, 2560}
+var thumbWidthBuckets = []int{120, 160, 240, 320, 480, 640, 740, 960, 1080, 1280, 1440, 1600, 1920, 2560}
 
 // snapWidth 把任意宽度向上吸附到最近的档位(不降采样,避免糊图)。
 func snapWidth(w int) int {

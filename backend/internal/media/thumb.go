@@ -32,8 +32,8 @@ import (
 const (
 	// ThumbVersion 编码参数版本:调整质量/算法时递增即可让整批缓存失效。
 	ThumbVersion = "v2"
-	// ThumbQuality cwebp 有损质量(-q)。
-	ThumbQuality = 82
+	// ThumbQuality cwebp 有损质量(-q)。截图/文字类图片在 82 下会明显发虚。
+	ThumbQuality = 88
 	// thumbMaxSrcBytes 单张源图字节上限(超出直接拒绝,防打爆内存/磁盘)。
 	thumbMaxSrcBytes = 100 << 20
 )

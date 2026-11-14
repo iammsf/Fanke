@@ -1,16 +1,19 @@
 <script setup lang="ts">
 // 分类/标签详情文章列表(两个路由共用,仅 type 不同)
-import type { Page, PostSummary, TermWithCount } from '~/types'
+import type { Page, PostSummary } from '~/types'
 
 const props = defineProps<{ type: 'category' | 'tag'; slug: string }>()
 
 const api = usePublicApi()
 const route = useRoute()
 const router = useRouter()
+// 术语列表与总览页共用缓存:从总览点进来时标题和胶囊立即就位,不会先塌成骨架
+const { terms, ensure: ensureTerms } = useTermCache(props.type)
 
 const data = ref<Page<PostSummary> | null>(null)
-const terms = ref<TermWithCount[]>([])
 const loading = ref(true)
+// 切换分类/标签时保留上一份列表,只做淡出+禁用点击,不整块换骨架屏
+const switching = ref(false)
 const error = ref<any>(null)
 
 const page = computed(() => Math.max(1, Number(route.query.page) || 1))
@@ -20,13 +23,12 @@ let seq = 0
 // 顶部标题与切换胶囊只加载一次;切换标签/分类时只刷新下方文章列表,
 // 标题、胶囊和 header 都不重挂载,避免点击瞬间闪烁跳动。
 const loadTerms = async () => {
-  if (terms.value.length) return
-  const ts = await api.terms(props.type)
-  if (ts) terms.value = ts
+  await ensureTerms(false)
 }
 
 const loadPosts = async () => {
   const my = ++seq
+  switching.value = !!data.value
   loading.value = true
   error.value = null
   const res = props.type === 'category'
@@ -36,6 +38,7 @@ const loadPosts = async () => {
   if (res) data.value = res
   else error.value = new Error('加载失败')
   loading.value = false
+  switching.value = false
 }
 
 const load = async () => {
@@ -70,18 +73,28 @@ onMounted(load)
       {{ type === 'tag' ? '#' : '' }}{{ t.name }} <small>({{ t.count }})</small>
     </AppTag>
   </div>
-  <PostList
-    :data="data"
-    :loading="loading"
-    :error="error"
-    :page="page"
-    :empty-text="`这个${type === 'category' ? '分类' : '标签'}下暂时没有文章。`"
-    @go="go"
-    @retry="load"
-  />
+  <div class="term-list" :class="{ switching }">
+    <PostList
+      :data="data"
+      :loading="loading && !data"
+      :error="error"
+      :page="page"
+      :empty-text="`这个${type === 'category' ? '分类' : '标签'}下暂时没有文章。`"
+      @go="go"
+      @retry="load"
+    />
+  </div>
 </template>
 
 <style scoped>
+.term-list {
+  transition: opacity 0.15s ease;
+}
+/* 切换术语时不闪骨架:保留旧列表并稍微变淡,直到新数据到达 */
+.term-list.switching {
+  opacity: 0.45;
+  pointer-events: none;
+}
 .term-switch {
   display: flex;
   flex-wrap: wrap;

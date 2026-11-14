@@ -46,6 +46,25 @@ export default defineNuxtConfig({
     },
   },
 
+  router: {
+    options: {
+      // 分类/标签详情之间切换时只刷新列表,保持当前滚动位置;
+      // 其他路由跳转仍然回到顶部(默认行为)。
+      scrollBehavior(to, from, savedPosition) {
+        if (savedPosition) return savedPosition
+        const sameTermPage = /^\/(categories|tags)\/[^/]+$/
+        if (
+          sameTermPage.test(to.path) &&
+          sameTermPage.test(from.path) &&
+          to.path.split('/')[1] === from.path.split('/')[1]
+        ) {
+          return false
+        }
+        return { top: 0 }
+      },
+    },
+  },
+
   nitro: {
     // 仅开发模式生效:把 API/本地上传目录/缩图接口代理到后端
     devProxy: {

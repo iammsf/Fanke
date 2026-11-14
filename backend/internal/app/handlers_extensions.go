@@ -632,12 +632,27 @@ func (a *App) ServeExtensionPage(w http.ResponseWriter, r *http.Request) {
 
 // ServeExtensionAsset 提供包内其他静态文件(favico/css/js/图片等)。
 func (a *App) ServeExtensionAsset(w http.ResponseWriter, r *http.Request) {
+	a.serveExtensionFile(w, r, chi.URLParam(r, "*"))
+}
+
+// ServeExtensionRootFile 提供插件根目录下的单层文件。
+// 插件 index.html 里写的是 ./app.js、./init.js 这类相对地址,页面地址是
+// /ext/{slug}/page,不带斜杠时浏览器会把它们解析到 /ext/{slug}/ 下。
+func (a *App) ServeExtensionRootFile(w http.ResponseWriter, r *http.Request) {
+	a.serveExtensionFile(w, r, chi.URLParam(r, "file"))
+}
+
+func (a *App) serveExtensionFile(w http.ResponseWriter, r *http.Request, rest string) {
 	slug := chi.URLParam(r, "slug")
 	if !extExplicitSlugRe.MatchString(slug) {
 		a.fail(w, http.StatusBadRequest, "非法插件标识")
 		return
 	}
-	rest := chi.URLParam(r, "*")
+	rest = strings.TrimPrefix(rest, "/")
+	if rest == "" {
+		a.fail(w, http.StatusNotFound, "资源不存在")
+		return
+	}
 	p, err := safeJoin(a.extDir(slug), rest)
 	if err != nil {
 		a.fail(w, http.StatusBadRequest, "非法路径")

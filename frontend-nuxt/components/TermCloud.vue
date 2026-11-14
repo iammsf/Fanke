@@ -1,20 +1,16 @@
 <script setup lang="ts">
 // 分类/标签总览云(两个页面共用,仅 type 不同)
-import type { TermWithCount } from '~/types'
-
 const props = defineProps<{ type: 'category' | 'tag' }>()
 
-const api = usePublicApi()
-const terms = ref<TermWithCount[] | null>(null)
-const loading = ref(true)
+const { terms, ensure } = useTermCache(props.type)
+const loading = ref(!terms.value.length)
 const error = ref<any>(null)
 
 const load = async () => {
-  loading.value = true
+  loading.value = !terms.value.length
   error.value = null
-  const res = await api.terms(props.type)
-  if (res) terms.value = res
-  else error.value = new Error('加载失败')
+  const res = await ensure(true)
+  if (res === null) error.value = new Error('加载失败')
   loading.value = false
 }
 onMounted(load)

@@ -21,7 +21,8 @@ type ImgRewrite struct {
 	Sizes string
 }
 
-const defaultProseSizes = "(max-width: 720px) 92vw, 700px"
+// 正文容器上限 1080px 减左右内边距,实际排版宽度约 1040px。
+const defaultProseSizes = "(max-width: 720px) 92vw, 1040px"
 
 // RewriteImages 把正文 HTML 里的 <img> 改写为「缩图 + srcset + 显式宽高 + 懒加载」。
 //
@@ -150,6 +151,19 @@ func rewriteOne(img *html.Node, cfg ImgRewrite, widths []int, sizes string) bool
 		// 源图比所有档位都窄:用源图宽度当唯一档位(服务端只缩不放)
 		if u := cfg.Thumb(src, ow); u != "" {
 			srcset = append(srcset, u+" "+strconv.Itoa(ow)+"w")
+		}
+	}
+	// 原图作为最大候选:高分屏(2x/3x)按需取原图,否则小图会被强行拉大导致发虚。
+	if ow > 0 {
+		dup := false
+		for _, s := range srcset {
+			if strings.HasSuffix(s, " "+strconv.Itoa(ow)+"w") {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			srcset = append(srcset, src+" "+strconv.Itoa(ow)+"w")
 		}
 	}
 	if len(srcset) == 0 {

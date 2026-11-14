@@ -10,9 +10,9 @@ export function thumbUrl(src: string, w: number): string {
 }
 
 /**
- * 生成 srcset:全部指向缩图端点,绝不放原图。
- * 原图动辄几百 KB,一旦进 srcset,高分屏桌面就会选中它 —— 等于白做优化。
- * 原图只用于图片查看器打开大图(见 data-orig)。
+ * 生成 srcset:小档走缩图端点,原图作为最大候选放在末尾。
+ * 原图只有高分屏(2x/3x)真的需要那么多像素时才会被选中,
+ * 否则小图会被强行放大显示,文字和截图会明显发虚。
  */
 export function thumbSrcset(src: string, widths: number[], origW = 0): string {
   if (!src || src.startsWith('data:')) return ''
@@ -21,9 +21,11 @@ export function thumbSrcset(src: string, widths: number[], origW = 0): string {
     .map((w) => `${thumbUrl(src, w)} ${w}w`)
   // 源图比所有档位都窄:用源图宽度当唯一档位(服务端只缩不放)
   if (!list.length && origW > 0) list.push(`${thumbUrl(src, origW)} ${origW}w`)
+  // 原图作为最大候选,供高 DPR 屏幕取用
+  if (origW > 0 && !list.some((s) => s.endsWith(` ${origW}w`))) list.push(`${src} ${origW}w`)
   return list.join(', ')
 }
 
 /** 卡片封面:桌面整宽(容器上限 1080px)、移动端 120px 定宽。 */
-export const COVER_WIDTHS = [240, 480, 740, 1080]
+export const COVER_WIDTHS = [240, 480, 740, 1080, 1440]
 export const COVER_SIZES = '(max-width: 640px) 120px, (max-width: 1100px) 92vw, 1080px'

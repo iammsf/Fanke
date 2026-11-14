@@ -91,10 +91,17 @@ function fromEditorHtml(html: string): string {
   return root.innerHTML
 }
 
+// v-model 绑定给 TinyMCE 的必须是「画布 HTML」(figure 形态)；
+// 落库 HTML(fanke-img 形态)只通过 emit 往外发,绝不回灌编辑器,
+// 否则 tinymce-vue 的 watch 会 setContent 一次,把插件节点解析成裸标签并丢属性。
 const syncValue = (ed: any) => {
-  value.value = fromEditorHtml(ed.getContent())
-  lastEmitted = value.value
-  emit('update:modelValue', value.value)
+  // 保存前若还停在内联 HTML 编辑态,先把它还原成真实标签
+  if (editEl && !applyingEdit) applyInlineHtmlEdit(true)
+  const canvas = ed.getContent()
+  value.value = canvas
+  const out = fromEditorHtml(canvas)
+  lastEmitted = out
+  emit('update:modelValue', out)
 }
 
 const uploadImage = async (blobInfo: any, progress: (percent: number) => void) => {
@@ -103,6 +110,162 @@ const uploadImage = async (blobInfo: any, progress: (percent: number) => void) =
     progress,
   )
   return media.url
+}
+
+// ---------- 右键「编辑 HTML」:整块(含 p/a/img 等外层标签)在画布内变成可编辑代码 ----------
+const inlineEditing = ref(false)
+// 选区覆盖到的正文顶层块(直接挂在 body 下的节点),含外层标签
+let pendingHtml: { html: string; first: HTMLElement; last: HTMLElement } | null = null
+let editEl: HTMLElement | null = null
+let editOrig = ''
+let applyingEdit = false
+
+// 只清理正文首尾完全空白的段落,不碰带图片/表格/代码块的容器
+const stripEmptyEdgeBlocks = (body: HTMLElement) => {
+  const emptyP = (el: Element | null) =>
+    !!el && el.tagName === 'P' && !(el.textContent || '').trim() && !el.querySelector('img,figure,table,pre')
+  let guard = 0
+  while (emptyP(body.firstElementChild) && guard++ < 10) body.firstElementChild!.remove()
+  guard = 0
+  while (emptyP(body.lastElementChild) && guard++ < 10) body.lastElementChild!.remove()
+}
+
+/** 找到包含该节点的正文顶层块(直接挂在 body 下的元素)。 */
+const topBlockOf = (ed: any, node: Node | null): HTMLElement | null => {
+  const body = ed.getBody()
+  let el: HTMLElement | null = node ? (node.nodeType === 1 ? (node as HTMLElement) : node.parentElement) : null
+  if (!el || el === body) return null
+  while (el.parentElement && el.parentElement !== body) el = el.parentElement
+  return el
+}
+
+/** 右键时记录目标:选区覆盖到的整块(含外层标签),或光标所在块。 */
+const captureHtmlTarget = (ed: any, target: HTMLElement | null) => {
+  const body = ed.getBody()
+  const sel = ed.selection
+  let first: HTMLElement | null = null
+  let last: HTMLElement | null = null
+  if (!sel.isCollapsed()) {
+    const rng = sel.getRng()
+    first = topBlockOf(ed, rng.startContainer)
+    last = topBlockOf(ed, rng.endContainer) || first
+  } else {
+    const host = target?.closest?.('[data-fanke-node]') as HTMLElement | null
+    const cur = target && target !== body && body.contains(target) ? target : (sel.getNode() as HTMLElement | null)
+    first = topBlockOf(ed, host || cur)
+    last = first
+  }
+  if (!first || !last) {
+    pendingHtml = null
+    return
+  }
+  // 保证 first 在 last 之前(反向选择)
+  if (first.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_PRECEDING) {
+    const tmp = first
+    first = last
+    last = tmp
+  }
+  const parts: string[] = []
+  let n: Node | null = first
+  while (n) {
+    if (n.nodeType === 1) parts.push(ed.serializer.serialize(n as HTMLElement, { format: 'html' }))
+    if (n === last) break
+    n = n.nextSibling
+  }
+  pendingHtml = { html: parts.join('\n'), first, last }
+}
+
+/** 用给定 HTML 替换当前代码块(空内容则整块删掉)。 */
+const replaceEditBlock = (ed: any, html: string) => {
+  const el = editEl
+  if (!el) return
+  const parent = el.parentNode
+  if (!parent) return
+  if (!html.trim()) {
+    ed.dom.remove(el)
+    return
+  }
+  const tmp = ed.getDoc().createElement('div')
+  tmp.innerHTML = html
+  while (tmp.firstChild) parent.insertBefore(tmp.firstChild, el)
+  ed.dom.remove(el)
+  stripEmptyEdgeBlocks(ed.getBody())
+}
+
+/** 把当前代码块还原成真实 HTML。 */
+const applyInlineHtmlEdit = (silent = false) => {
+  const ed = editor.value
+  if (!ed || !editEl) return
+  const html = (editEl.textContent || '').trim()
+  applyingEdit = true
+  try {
+    replaceEditBlock(ed, html)
+    inlineEditing.value = false
+    editEl = null
+    editOrig = ''
+    if (!silent) {
+      userEdited = true
+      syncValue(ed)
+    }
+  } catch {
+    // 解析失败就还原,不让半截代码毁掉正文
+    try {
+      replaceEditBlock(ed, editOrig)
+    } catch {
+      /* ignore */
+    }
+    editEl = null
+    editOrig = ''
+    inlineEditing.value = false
+  } finally {
+    applyingEdit = false
+  }
+}
+
+/** 取消编辑:还原成右键前的 HTML(含外层标签)。 */
+const cancelInlineHtmlEdit = () => {
+  const ed = editor.value
+  if (!ed || !editEl) return
+  applyingEdit = true
+  try {
+    replaceEditBlock(ed, editOrig)
+  } catch {
+    /* ignore */
+  } finally {
+    editEl = null
+    editOrig = ''
+    inlineEditing.value = false
+    applyingEdit = false
+  }
+}
+
+/** 把目标节点/选区换成可编辑的 HTML 代码块。 */
+const startInlineHtmlEdit = (ed: any) => {
+  if (!pendingHtml) return
+  applyInlineHtmlEdit(true)
+  const p = pendingHtml
+  pendingHtml = null
+  const parent = p.first.parentNode
+  if (!parent) return
+  const el = ed.getDoc().createElement('pre')
+  el.className = 'fanke-html-edit'
+  el.setAttribute('contenteditable', 'true')
+  el.textContent = p.html
+  // 代码块插到被选中的整块前面,再把原块删掉
+  parent.insertBefore(el, p.first)
+  let n: Node | null = p.first
+  while (n) {
+    const next: Node | null = n.nextSibling
+    const isLast = n === p.last
+    ed.dom.remove(n)
+    if (isLast) break
+    n = next
+  }
+  editEl = el
+  editOrig = p.html
+  inlineEditing.value = true
+  ed.selection.setCursorLocation(el, 0)
+  el.focus?.()
 }
 
 const init = {
@@ -116,19 +279,26 @@ const init = {
   object_resizing: false,
   toolbar_sticky: true,
   toolbar_sticky_offset: 0,
-  menubar: 'file edit view insert format table tools',
+  menubar: 'edit view insert format table tools',
+  // 「查看」菜单里去掉源代码(只在 工具 → 源代码 保留一处)
+  menu: {
+    view: { title: '查看', items: 'visualaid' },
+  },
   language: 'zh_CN',
   plugins: 'autoresize code codesample lists link table wordcount',
   toolbar:
-    'undo redo | blocks | bold italic underline strikethrough | forecolor backcolor | alignleft aligncenter alignright | bullist numlist blockquote | link fankeInsert table | codesample code | removeformat',
+    'undo redo | blocks | bold italic underline strikethrough | forecolor backcolor | alignleft aligncenter alignright | bullist numlist blockquote | link fankeInsert table | codesample | removeformat',
   branding: false,
   promotion: false,
   convert_urls: false,
   relative_urls: false,
   verify_html: false,
   custom_elements: '~fanke-img',
+  // 右键菜单:保留 TinyMCE 自带的链接/表格菜单,末尾追加「编辑 HTML」
+  contextmenu: 'link table fankeHtmlEdit',
   extended_valid_elements:
     'figure[class|style|data-fanke-node|des|des_pos|des_sty|src],figcaption[class|style],' +
+    'pre[class|contenteditable],' +
     'img[src|alt|title|width|height|class|style|loading|data-fanke-node|des|des_pos|des_sty],span[class]',
   automatic_uploads: true,
   images_upload_handler: uploadImage,
@@ -142,6 +312,9 @@ const init = {
     'p { margin: .9em 0; }',
     'blockquote { margin: 1em 0; padding: .4em 1em; border-left: 3px solid #dcdfe6; color: #606266; background: #fafafa; }',
     'pre { padding: 12px 14px; background: #f6f8fa; border-radius: 8px; overflow: auto; }',
+    'pre.fanke-html-edit { background: #1f2430; color: #e6e6e6; padding: 14px 16px; border-radius: 8px;',
+    '  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px;',
+    '  line-height: 1.7; white-space: pre-wrap; outline: 2px solid #7c5cff; outline-offset: 1px; }',
     'code { background: #f2f3f5; padding: 1px 5px; border-radius: 4px; font-size: .92em; }',
     'table { border-collapse: collapse; width: 100%; } td,th { border: 1px solid #dcdfe6; padding: 6px 8px; }',
     '[data-fanke-node]:hover { outline: 1px dashed #c0c4cc; outline-offset: 2px; }',
@@ -166,6 +339,11 @@ const init = {
       },
     })
     ed.on('change input undo redo', () => {
+      // 内联编辑 HTML 代码块时不要回写内容:每一帧都解析会把正文拆碎
+      if (editEl) {
+        ed.dispatch('ResizeContent')
+        return
+      }
       userEdited = true
       syncValue(ed)
       ed.dispatch('ResizeContent')
@@ -194,6 +372,36 @@ const init = {
       } catch (err) {
         console.error('[editor] 打开节点设置失败', err)
       }
+    })
+    // 右键:只记录目标(不改动 TinyMCE 自己的右键菜单)
+    ed.on('contextmenu', (e: any) => {
+      captureHtmlTarget(ed, (e?.target as HTMLElement) || null)
+    })
+    // 「编辑 HTML」以 TinyMCE 菜单项形式挂进右键菜单,避免和原生菜单叠在一起
+    ed.ui.registry.addMenuItem('fankeHtmlEdit', {
+      text: '编辑 HTML',
+      icon: 'code',
+      onAction: () => startInlineHtmlEdit(ed),
+    })
+    ed.ui.registry.addContextMenu('fankeHtmlEdit', {
+      update: () => (pendingHtml ? ['fankeHtmlEdit'] : []),
+    })
+    // 代码块内:Ctrl+Enter 应用,Esc 取消
+    ed.on('keydown', (e: any) => {
+      if (!editEl) return
+      if (e.key === 'Escape') {
+        e.preventDefault?.()
+        cancelInlineHtmlEdit()
+      } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault?.()
+        applyInlineHtmlEdit()
+      }
+    })
+    // 点到代码块外面就算编辑完成
+    ed.on('click', (e: any) => {
+      if (!editEl) return
+      const t = e.target as HTMLElement | null
+      if (!t || !editEl.contains(t)) applyInlineHtmlEdit()
     })
     ed.on('init', () => {
       const onLoad = () => ed.dispatch('ResizeContent')
@@ -239,7 +447,10 @@ const applyNodeSettings = (values: Record<string, any>) => {
   syncValue(ed)
 }
 
-const getContent = () => (editor.value ? fromEditorHtml(editor.value.getContent()) : value.value)
+const getContent = () => {
+  if (editor.value && editEl && !applyingEdit) applyInlineHtmlEdit(true)
+  return editor.value ? fromEditorHtml(editor.value.getContent()) : value.value
+}
 const uploadImages = async () => {
   if (editor.value) await editor.value.uploadImages()
   if (editor.value) syncValue(editor.value)
@@ -269,13 +480,18 @@ defineExpose({ insertNode, insertPlainImage, applyNodeSettings, getContent, uplo
 watch(
   () => props.modelValue,
   (next) => {
-    value.value = next || ''
-    if (!editor.value || value.value === lastEmitted) return
-    if (!value.value.trim() && fromEditorHtml(editor.value.getContent()).trim()) return
-    if (fromEditorHtml(editor.value.getContent()) !== value.value) {
-      editor.value.setContent(toEditorHtml(value.value))
-      lastEmitted = value.value
+    const incoming = next || ''
+    if (!editor.value) {
+      value.value = incoming
+      return
     }
+    // 自己刚发出去的落库 HTML,不回灌
+    if (incoming === lastEmitted) return
+    const canvas = toEditorHtml(incoming)
+    if (canvas === editor.value.getContent()) return
+    value.value = canvas
+    editor.value.setContent(canvas)
+    lastEmitted = incoming
   },
 )
 
@@ -284,8 +500,11 @@ watch(
   nodes,
   () => {
     if (!editor.value || userEdited) return
-    const current = fromEditorHtml(editor.value.getContent())
-    if (current.trim()) editor.value.setContent(toEditorHtml(current))
+    const canvas = editor.value.getContent()
+    const converted = toEditorHtml(fromEditorHtml(canvas))
+    if (!converted.trim() || converted === canvas) return
+    value.value = converted
+    editor.value.setContent(converted)
   },
   { deep: false },
 )
@@ -324,14 +543,56 @@ onMounted(async () => {
         license-key="gpl"
       />
       <div v-else class="rich-editor-loading">编辑器加载中…</div>
+      <div v-if="inlineEditing" class="inline-hint">
+        <span>正在编辑 HTML</span>
+        <button type="button" class="hint-btn primary" @click="applyInlineHtmlEdit()">应用</button>
+        <button type="button" class="hint-btn" @click="cancelInlineHtmlEdit()">取消</button>
+        <span class="hint-tip">Ctrl+Enter 应用 · Esc 取消</span>
+      </div>
     </div>
     <template #fallback><div class="rich-editor-loading">编辑器加载中…</div></template>
   </ClientOnly>
 </template>
 
 <style scoped>
+.rich-editor {
+  position: relative;
+}
 .rich-editor-loading {
   padding: 40px 0;
   color: var(--muted, #909399);
+}
+.inline-hint {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(31, 36, 48, 0.92);
+  color: #fff;
+  font-size: 12px;
+}
+.hint-tip {
+  color: rgba(255, 255, 255, 0.6);
+}
+.hint-btn {
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: transparent;
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+.hint-btn.primary {
+  border-color: transparent;
+  background: #7c5cff;
+}
+.hint-btn:hover {
+  opacity: 0.9;
 }
 </style>

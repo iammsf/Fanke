@@ -80,6 +80,8 @@ func (a *App) Router() http.Handler {
 			r.Get("/ext/{slug}/page", a.ServeExtensionPage)
 			r.Get("/ext/{slug}/page/*", a.ServeExtensionPageFile)
 			r.Get("/ext/{slug}/assets/*", a.ServeExtensionAsset)
+			// index.html 里的 ./app.js、./init.js 等相对引用
+			r.Get("/ext/{slug}/{file}", a.ServeExtensionRootFile)
 			r.With(chimw.Throttle(60)).Post("/ext/{slug}/hook/{hook}", a.InvokeExtensionHookPublic)
 
 			// 管理端
