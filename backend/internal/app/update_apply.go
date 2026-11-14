@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -235,7 +236,9 @@ func extractCoreArchive(archive, dest string) error {
 		if rel == "" {
 			continue
 		}
-		if strings.Contains(rel, "..") || strings.HasPrefix(rel, "/") {
+		rel = path.Clean(rel)
+		// 只拦真正的路径穿越;前端产物里可能有 "_...xxx.css" 这类合法文件名。
+		if rel == "." || rel == ".." || strings.HasPrefix(rel, "../") || strings.HasPrefix(rel, "/") {
 			return errors.New("升级包包含非法路径")
 		}
 		if rel != "bin/api" && !strings.HasPrefix(rel, "web/") {
