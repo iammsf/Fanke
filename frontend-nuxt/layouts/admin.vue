@@ -1,6 +1,5 @@
 <script setup lang="ts">
 // 后台布局:左侧导航 + 右侧内容区,复用公开页设计令牌与明暗主题
-import type { AdminUser } from '~/types'
 import {
   Odometer,
   Document,
@@ -14,8 +13,9 @@ import {
 
 useSiteBoot(false)
 
-const { api, logout } = useAuth()
+const { logout } = useAuth()
 const { site } = useSettings()
+const { me, load: loadMe } = useAdminMe()
 const route = useRoute()
 
 const links = [
@@ -36,7 +36,6 @@ const active = computed(() => {
   return seg
 })
 
-const me = ref<AdminUser | null>(null)
 // 非管理员只保留自己有权访问的入口,管理员专属页面(插件/AI/用户/设置)不显示
 const visibleLinks = computed(() => {
   if (!me.value || me.value.role === 'admin') return links
@@ -45,14 +44,9 @@ const visibleLinks = computed(() => {
   return links.filter((l) => authorAllowed.has(l.id))
 })
 onMounted(async () => {
-  try {
-    me.value = await api<AdminUser>('/auth/me')
-  } catch {
-    /* 401 已由 api() 内跳登录 */
-  }
-  // 加载启用的扩展插件列表
+  // 并行拉取:账号信息 + 启用插件列表
   const { ensurePublic } = useExtensions()
-  await ensurePublic()
+  await Promise.all([loadMe(), ensurePublic()])
 })
 </script>
 

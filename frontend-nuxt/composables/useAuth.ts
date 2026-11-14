@@ -151,6 +151,8 @@ export function useAuth() {
       /* 忽略网络错误,本地照常退出 */
     }
     clearToken()
+    // 清掉共享的后台用户缓存,避免换号登录后短暂显示上一个账号
+    useState('admin_me').value = null
     gotoLogin()
   }
 

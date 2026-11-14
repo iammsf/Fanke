@@ -38,6 +38,8 @@ fanmail-landing/
 zz_terms.html
 state/
 data/
+# 本地产物
+dist/
 *.tar.gz
 *.7z
 deploy/.env

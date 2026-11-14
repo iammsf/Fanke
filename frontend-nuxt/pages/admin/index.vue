@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // 仪表盘:管理员看站点概览与快捷入口;非管理员只看自己的资料与密码
 definePageMeta({ layout: 'admin', middleware: 'auth' })
-import type { AdminPost, AdminUser, CoreUpdateInfo, Page } from '~/types'
-import { DocumentAdd, Picture, ChatDotRound, Setting } from '@element-plus/icons-vue'
+import type { AdminPost, CoreUpdateInfo, Page } from '~/types'
+import { DocumentAdd, Picture, ChatDotRound, Setting, Refresh, Link } from '@element-plus/icons-vue'
 
 const { api, logout } = useAuth()
 const { push } = useToast()
@@ -10,12 +10,15 @@ const { run } = useBusy()
 
 const loading = ref(true)
 const loadError = ref<any>(null)
-const me = ref<AdminUser | null>(null)
+const { me, load: loadMe } = useAdminMe()
 const stats = ref({ posts: '-', drafts: '-', pending: '-' })
 const host = ref('')
 const version = ref('')
 const coreUpdate = ref<CoreUpdateInfo | null>(null)
 const updateBusy = ref(false)
+const updateCheckedAt = ref<number | null>(null)
+
+const UPDATE_CACHE_KEY = 'fanke:core-update'
 
 const isAdmin = computed(() => me.value?.role === 'admin')
 
@@ -27,10 +30,40 @@ const loadVersion = async () => {
   }
 }
 
+// 检查结果本地持久化:切换页面/刷新后仍能显示上次结果,不用重复点检查。
+const loadCachedUpdate = () => {
+  try {
+    const raw = localStorage.getItem(UPDATE_CACHE_KEY)
+    if (!raw) return
+    const saved = JSON.parse(raw) as { result?: CoreUpdateInfo; checkedAt?: number }
+    if (!saved?.result || !saved.checkedAt) return
+    // 升级过(版本变化)后旧结果不可信,直接丢弃
+    if (version.value && saved.result.current && saved.result.current !== version.value) return
+    coreUpdate.value = saved.result
+    updateCheckedAt.value = saved.checkedAt
+  } catch {
+    // 缓存损坏时忽略
+  }
+}
+
+const saveCachedUpdate = () => {
+  if (!coreUpdate.value) return
+  updateCheckedAt.value = Date.now()
+  try {
+    localStorage.setItem(
+      UPDATE_CACHE_KEY,
+      JSON.stringify({ result: coreUpdate.value, checkedAt: updateCheckedAt.value }),
+    )
+  } catch {
+    // 隐私模式等无法写入时忽略
+  }
+}
+
 const checkUpdate = async () => {
   updateBusy.value = true
   try {
     coreUpdate.value = await run('检查更新中…', () => api<CoreUpdateInfo>('/admin/update/check'))
+    saveCachedUpdate()
     push(
       coreUpdate.value.has_update ? `有新版本 ${coreUpdate.value.latest}` : '已是最新版本',
       !coreUpdate.value.has_update,
@@ -51,33 +84,34 @@ const loadData = async () => {
   loading.value = true
   loadError.value = null
   try {
-    me.value = await api<AdminUser>('/auth/me')
+    const user = await loadMe()
+    if (!user) throw new Error('无法获取账号信息')
+    if (user.role !== 'admin') {
+      loading.value = false
+      return
+    }
+    // 各统计单独容错:author 角色访问评论接口会 403,显示 "-"
+    const [posts, drafts, pending] = await Promise.all([
+      api<Page<AdminPost>>('/admin/posts?per=1').catch(() => null),
+      api<Page<AdminPost>>('/admin/posts?status=draft&per=1').catch(() => null),
+      api<Page<unknown>>('/admin/comments?status=pending&per=1').catch(() => null),
+    ])
+    stats.value = {
+      posts: posts ? String(posts.total) : '-',
+      drafts: drafts ? String(drafts.total) : '-',
+      pending: pending ? String(pending.total) : '-',
+    }
+    if (!posts && !drafts) push('统计数据加载失败', false)
   } catch (e: any) {
     loadError.value = e
+  } finally {
     loading.value = false
-    return
   }
-  if (!isAdmin.value) {
-    loading.value = false
-    return
-  }
-  // 各统计单独容错:author 角色访问评论接口会 403,显示 "-"
-  const [posts, drafts, pending] = await Promise.all([
-    api<Page<AdminPost>>('/admin/posts?per=1').catch(() => null),
-    api<Page<AdminPost>>('/admin/posts?status=draft&per=1').catch(() => null),
-    api<Page<unknown>>('/admin/comments?status=pending&per=1').catch(() => null),
-  ])
-  stats.value = {
-    posts: posts ? String(posts.total) : '-',
-    drafts: drafts ? String(drafts.total) : '-',
-    pending: pending ? String(pending.total) : '-',
-  }
-  if (!posts && !drafts) push('统计数据加载失败', false)
-  loading.value = false
 }
 onMounted(() => {
   host.value = location.host
-  loadVersion()
+  // 版本与统计并行拉取;拿到版本后再恢复上次的检查结果
+  loadVersion().then(loadCachedUpdate)
   loadData()
 })
 
@@ -186,14 +220,16 @@ useHead({ title: '仪表盘 · fanke 后台' })
             </div>
           </dl>
           <div class="update-actions">
-            <el-button size="small" :loading="updateBusy" @click="checkUpdate">检查更新</el-button>
+            <el-button type="primary" :icon="Refresh" :loading="updateBusy" @click="checkUpdate">检查更新</el-button>
             <el-button
               v-if="coreUpdate?.has_update && coreUpdate.page_url"
-              link
-              type="primary"
+              :icon="Link"
               @click="openRelease"
             >查看发布页</el-button>
           </div>
+          <p v-if="updateCheckedAt" class="update-checked">
+            上次检查 {{ fmtDateTime(new Date(updateCheckedAt).toISOString()) }}
+          </p>
           <template v-if="coreUpdate?.has_update">
             <p v-if="coreUpdate.notes" class="update-notes">{{ coreUpdate.notes }}</p>
             <p class="muted update-tip">
@@ -273,11 +309,13 @@ useHead({ title: '仪表盘 · fanke 后台' })
 .update-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   flex-wrap: wrap;
 }
-.update-actions :deep(.el-button + .el-button) {
-  margin-left: 0;
+.update-checked {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--muted);
 }
 .update-notes {
   margin: 14px 0 0;

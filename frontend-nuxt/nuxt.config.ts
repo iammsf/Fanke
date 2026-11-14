@@ -11,7 +11,6 @@ export default defineNuxtConfig({
   css: [
     '~/assets/css/tokens.css', // 内置 Element Plus 主题令牌(上传主题运行时注入覆盖)
     'element-plus/theme-chalk/dark/css-vars.css', // Element Plus 暗色变量(挂 html.dark)
-    '@fontsource/noto-color-emoji/400.css',
     '~/assets/css/global.css',
   ],
 
