@@ -148,6 +148,12 @@ jobs:
           git commit -m "chore: 更新 ${VERSION} 发布清单"
           git push origin main
 
+      - name: 刷新 jsDelivr 清单缓存
+        continue-on-error: true
+        run: |
+          # updates.json 走 jsDelivr @main,发版后必须主动清缓存,否则站点仍会读到旧版本
+          curl -fsS "https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}@main/updates.json"
+
       - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
