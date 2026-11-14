@@ -27,8 +27,9 @@ RestrictSUIDSGID=true
 LockPersonality=true
 # Go 运行时不需要写执行内存,禁用可减少攻击面
 MemoryDenyWriteExecute=false
-# 仅放行运行期真正需要写入的目录(插件会写 extensions、缩略图缓存)
-ReadWritePaths=__DIR__/state __DIR__/media __DIR__/themes __DIR__/extensions /var/cache/fanke-thumbs
+# 仅放行运行期真正需要写入的目录(插件会写 extensions、缩略图缓存;
+# 在线升级需要写 bin/ 与前端静态目录)
+ReadWritePaths=__DIR__/state __DIR__/media __DIR__/themes __DIR__/extensions __DIR__/bin __WEB_ROOT__ /var/cache/fanke-thumbs
 
 [Install]
 WantedBy=multi-user.target

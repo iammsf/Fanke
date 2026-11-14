@@ -49,6 +49,10 @@ type Config struct {
 	// UpdateManifestURL 更新清单地址(默认 GitHub 仓库根目录 updates.json;
 	// 大陆网络可改为 jsDelivr 等镜像地址,格式一致)。
 	UpdateManifestURL string
+	// AppDir 安装目录(默认从可执行文件路径推断,如 /opt/fanke)。
+	AppDir string
+	// WebRoot 前端静态目录(默认按 THEMES_DIR 推断站点 index,再退回 AppDir/web)。
+	WebRoot string
 
 	InsecureCookie bool
 
@@ -87,6 +91,8 @@ func Load() *Config {
 		ThumbAllowHosts:        get("THUMB_ALLOW_HOSTS", ""),
 		RedisURL:               get("REDIS_URL", ""),
 		UpdateManifestURL:      get("UPDATE_MANIFEST_URL", ""),
+		AppDir:                 get("APP_DIR", ""),
+		WebRoot:                get("WEB_ROOT", ""),
 		InsecureCookie:         get("INSECURE_COOKIE", "false") == "true",
 		BootstrapAdminEmail:    get("BOOTSTRAP_ADMIN_EMAIL", ""),
 		BootstrapAdminUsername: get("BOOTSTRAP_ADMIN_USERNAME", "admin"),

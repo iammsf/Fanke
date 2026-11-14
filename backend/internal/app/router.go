@@ -112,8 +112,9 @@ func (a *App) Router() http.Handler {
 			r.Group(func(r chi.Router) {
 				r.Use(a.requireRole("admin"))
 				r.Use(a.dedupeWrites)
-				// 博客本体版本检查(只检查,升级由部署脚本完成,插件目录不受影响)
+				// 博客本体版本检查与升级(升级只替换 bin/web,插件目录不受影响)
 				r.Get("/admin/update/check", a.CheckCoreUpdate)
+				r.Post("/admin/update/apply", a.ApplyCoreUpdate)
 				// 站点设置含可执行 HTML(页脚)/导航/主题等,只能由管理员修改,避免作者越权注入脚本。
 				r.Get("/admin/settings", a.AllSettings)
 				r.Put("/admin/settings", a.PutSetting)

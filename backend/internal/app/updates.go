@@ -27,7 +27,11 @@ type updateEntry struct {
 	Notes       string `json:"notes"`
 	PageURL     string `json:"page_url"`
 	DownloadURL string `json:"download_url"`
-	SHA256      string `json:"sha256"`
+	// DownloadURLs / SHA256s 按 GOARCH 区分(amd64/arm64);新版本清单使用这两个字段,
+	// DownloadURL / SHA256 保留做单架构兼容。
+	DownloadURLs map[string]string `json:"download_urls"`
+	SHA256       string            `json:"sha256"`
+	SHA256s      map[string]string `json:"sha256s"`
 }
 
 // updateManifest 对应仓库根目录的 updates.json:

@@ -95,6 +95,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import glob
+          import hashlib
           import json
           import os
           import subprocess
@@ -105,13 +106,25 @@ jobs:
           page = f'https://github.com/{repo}/releases/tag/{tag}'
           date = subprocess.check_output(['date', '-u', '+%Y-%m-%d']).decode().strip()
 
+          def sha256_file(path):
+              h = hashlib.sha256()
+              with open(path, 'rb') as fh:
+                  for chunk in iter(lambda: fh.read(1 << 20), b''):
+                      h.update(chunk)
+              return h.hexdigest()
+
+          archs = ('amd64', 'arm64')
+          urls = {a: f'{base}/fanke-{tag}-linux-{a}.tar.gz' for a in archs}
+          sums = {a: sha256_file(f'dist/fanke-{tag}-linux-{a}.tar.gz') for a in archs}
           core = {
               'version': tag.lstrip('vV'),
               'date': date,
               'notes': f'发布 {tag}:后端与前端更新,插件目录保持不变。',
               'page_url': page,
-              'download_url': f'{base}/fanke-{tag}-linux-amd64.tar.gz',
-              'sha256': '',
+              'download_url': urls['amd64'],
+              'download_urls': urls,
+              'sha256': sums['amd64'],
+              'sha256s': sums,
           }
           plugins = {}
           for path in sorted(glob.glob('extensions/*/info.json')):

@@ -134,18 +134,28 @@ sudo bash deploy/install.sh --update
 
 ## 版本与更新
 
-- 后台仪表盘显示当前版本，管理员可点「检查更新」查询博客本体最新版本
+- 后台仪表盘显示当前版本，管理员可点「检查更新」查询博客本体最新版本；有更新时出现「立即升级」
 - 插件列表 / 插件详情页有各自的「检查更新」，显示远端版本、更新说明与发布页链接
 - 检查逻辑读取仓库根目录的 [updates.json](updates.json)，默认通过 jsDelivr 镜像访问：
   `https://cdn.jsdelivr.net/gh/iammsf/fanke@main/updates.json`
   （原始地址 `https://raw.githubusercontent.com/iammsf/fanke/main/updates.json` 在部分网络会超时；两者内容一致，可用 `UPDATE_MANIFEST_URL` 覆盖）
-- 本体升级仍通过部署脚本完成：
 
-  ```bash
-  sudo bash deploy/install.sh --update
-  ```
+### 在线升级本体
 
-  升级只重建后端二进制与前端静态文件，**不会覆盖或删除 `extensions/` 插件目录**，也不会动 `themes/`、`media/`、`state/`。插件更新时单独上传新的插件 zip 即可。
+管理页点「立即升级」后，后端会：
+
+1. 从 GitHub Release 下载当前架构的 `fanke-<版本>-linux-<arch>.tar.gz`
+2. 校验清单里的 `sha256`
+3. 只替换 `bin/api` 与前端静态目录
+4. 退出进程，由 systemd 拉起新二进制
+
+`extensions/`、`themes/`、`media/`、`state/` 和数据库都不会动。要求服务账号对 `bin/` 与前端目录有写权限；systemd unit 已通过 `ReadWritePaths` 放行，安装脚本也会把前端目录 chown 给服务账号。
+
+也可以继续用部署脚本升级：
+
+```bash
+sudo bash deploy/install.sh --update
+```
 
 ### 发布新版本
 
@@ -180,6 +190,8 @@ git push origin v1.1.0
 | `THUMB_ALLOW_HOSTS` | 空 | 允许服务端代抓缩图的外部主机（逗号分隔，防 SSRF） |
 | `REDIS_URL` | 空 | 可选，多实例共享限流计数 |
 | `UPDATE_MANIFEST_URL` | jsDelivr 上的 `updates.json` | 更新清单地址；可换成 GitHub raw 或自建镜像 |
+| `APP_DIR` | 自动推断 | 在线升级的安装目录（可执行文件所在 `bin/` 的上级） |
+| `WEB_ROOT` | 自动推断 | 在线升级的前端静态目录（默认取 `THEMES_DIR` 所在站点的 `index`） |
 | `INSECURE_COOKIE` | `false` | 纯 HTTP 部署需设为 `true`，否则浏览器不保存登录 Cookie |
 | `BOOTSTRAP_ADMIN_EMAIL/USERNAME/PASSWORD` | 空 / `admin` / 空 | 仅在用户表为空时自动创建管理员 |
 

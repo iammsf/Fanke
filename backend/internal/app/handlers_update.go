@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -35,4 +36,28 @@ func (a *App) CheckCoreUpdate(w http.ResponseWriter, r *http.Request) {
 		"has_update":   has,
 		"manifest_url": a.manifestURL(),
 	})
+}
+
+// ApplyCoreUpdate 下载并安装本体升级包(管理员)。
+// 只替换后端二进制与前端静态文件,插件/主题/媒体/数据库不动;完成后进程退出,
+// 由 systemd 拉起新二进制。
+func (a *App) ApplyCoreUpdate(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Minute)
+	defer cancel()
+	m, err := a.fetchManifest(ctx)
+	if err != nil {
+		a.fail(w, http.StatusBadGateway, "检查更新失败: "+err.Error())
+		return
+	}
+	result, err := a.applyCoreUpdate(ctx, m)
+	if err != nil {
+		a.fail(w, http.StatusBadRequest, "升级失败: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+	// 给响应留出写出时间,然后退出让 systemd 用新二进制重启
+	go func() {
+		time.Sleep(800 * time.Millisecond)
+		os.Exit(1)
+	}()
 }

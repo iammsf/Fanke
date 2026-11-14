@@ -529,6 +529,7 @@ install -d -m 0755 "$WEB_ROOT"
 find "$WEB_ROOT" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 cp -a "$REPO_ROOT/frontend-nuxt/.output/public/." "$WEB_ROOT/"
 chown -R "$APP_NAME:$APP_NAME" "$APP_DIR"
+chown -R "$APP_NAME:$APP_NAME" "$WEB_ROOT"
 log "前端已部署到 $WEB_ROOT"
 
 # ---------- 运行时配置 ----------
@@ -578,7 +579,7 @@ write_env
 
 # ---------- systemd ----------
 log "安装 systemd 服务..."
-sed -e "s|__DIR__|$APP_DIR|g" "$SCRIPT_DIR/fanke-api.service" > /etc/systemd/system/fanke-api.service
+sed -e "s|__DIR__|$APP_DIR|g" -e "s|__WEB_ROOT__|$WEB_ROOT|g" "$SCRIPT_DIR/fanke-api.service" > /etc/systemd/system/fanke-api.service
 systemctl daemon-reload
 systemctl enable "$APP_NAME-api" >/dev/null 2>&1 || true
 systemctl restart "$APP_NAME-api"

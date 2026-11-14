@@ -3,6 +3,7 @@
 definePageMeta({ layout: 'admin', middleware: 'auth' })
 import type { AdminPost, CoreUpdateInfo, Page } from '~/types'
 import { DocumentAdd, Picture, ChatDotRound, Setting, Refresh, Link } from '@element-plus/icons-vue'
+import { ElMessageBox } from 'element-plus'
 
 const { api, logout } = useAuth()
 const { push } = useToast()
@@ -16,11 +17,62 @@ const host = ref('')
 const version = ref('')
 const coreUpdate = ref<CoreUpdateInfo | null>(null)
 const updateBusy = ref(false)
+const applying = ref(false)
 const updateCheckedAt = ref<number | null>(null)
 
 const UPDATE_CACHE_KEY = 'fanke:core-update'
 
 const isAdmin = computed(() => me.value?.role === 'admin')
+
+const normVersion = (v: string) => (v || '').replace(/^v/i, '')
+
+const waitForRestart = async (target: string): Promise<boolean> => {
+  for (let i = 0; i < 45; i++) {
+    await new Promise((r) => setTimeout(r, 2000))
+    try {
+      const v = await api<{ version: string }>('/version')
+      if (v?.version && normVersion(v.version) === normVersion(target)) return true
+    } catch {
+      // 重启期间请求会失败,继续等
+    }
+  }
+  return false
+}
+
+const applyUpdate = async () => {
+  const target = coreUpdate.value?.latest
+  if (!target) return
+  try {
+    await ElMessageBox.confirm(
+      `升级到 ${target}？只替换后端与前端，插件、主题、媒体和数据库都不会动；服务会重启几秒。`,
+      '升级确认',
+      { type: 'warning', confirmButtonText: '立即升级', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  applying.value = true
+  try {
+    await api('/admin/update/apply', { method: 'POST' })
+    push('升级包已安装，等待服务重启…', true)
+  } catch (e: any) {
+    if (e?.status && e.status >= 400) {
+      push(e.message || '升级失败', false)
+      applying.value = false
+      return
+    }
+    // 连接中断多半是服务正在重启,继续等版本变化
+    push('连接中断，升级可能仍在进行，等待服务重启…', true)
+  }
+  const ok = await waitForRestart(target)
+  applying.value = false
+  if (ok) {
+    localStorage.removeItem(UPDATE_CACHE_KEY)
+    location.reload()
+  } else {
+    push('等待超时：升级可能未完成，请检查 journalctl -u fanke-api', false)
+  }
+}
 
 const loadVersion = async () => {
   try {
@@ -220,10 +272,24 @@ useHead({ title: '仪表盘 · fanke 后台' })
             </div>
           </dl>
           <div class="update-actions">
-            <el-button type="primary" :icon="Refresh" :loading="updateBusy" @click="checkUpdate">检查更新</el-button>
+            <el-button
+              v-if="coreUpdate?.has_update"
+              type="primary"
+              :icon="Refresh"
+              :loading="applying"
+              @click="applyUpdate"
+            >立即升级</el-button>
+            <el-button
+              :type="coreUpdate?.has_update ? 'default' : 'primary'"
+              :icon="Refresh"
+              :loading="updateBusy"
+              :disabled="applying"
+              @click="checkUpdate"
+            >检查更新</el-button>
             <el-button
               v-if="coreUpdate?.has_update && coreUpdate.page_url"
               :icon="Link"
+              :disabled="applying"
               @click="openRelease"
             >查看发布页</el-button>
           </div>
@@ -233,8 +299,7 @@ useHead({ title: '仪表盘 · fanke 后台' })
           <template v-if="coreUpdate?.has_update">
             <p v-if="coreUpdate.notes" class="update-notes">{{ coreUpdate.notes }}</p>
             <p class="muted update-tip">
-              升级命令 <code>sudo bash deploy/install.sh --update</code>，只更新后端与前端，
-              <code>extensions/</code> 插件目录、主题与媒体数据都会保留。
+              升级只替换后端与前端，<code>extensions/</code> 插件目录、主题与媒体数据都会保留；升级期间站点会短暂重启。
             </p>
           </template>
         </div>
