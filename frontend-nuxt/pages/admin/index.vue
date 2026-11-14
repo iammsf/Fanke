@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 仪表盘:管理员看站点概览与快捷入口;非管理员只看自己的资料与密码
 definePageMeta({ layout: 'admin', middleware: 'auth' })
-import type { AdminPost, AdminUser, Page } from '~/types'
+import type { AdminPost, AdminUser, CoreUpdateInfo, Page } from '~/types'
 import { DocumentAdd, Picture, ChatDotRound, Setting } from '@element-plus/icons-vue'
 
 const { api, logout } = useAuth()
@@ -13,8 +13,34 @@ const loadError = ref<any>(null)
 const me = ref<AdminUser | null>(null)
 const stats = ref({ posts: '-', drafts: '-', pending: '-' })
 const host = ref('')
+const version = ref('')
+const coreUpdate = ref<CoreUpdateInfo | null>(null)
+const updateBusy = ref(false)
 
 const isAdmin = computed(() => me.value?.role === 'admin')
+
+const loadVersion = async () => {
+  try {
+    version.value = (await api<{ version: string }>('/version'))?.version || ''
+  } catch {
+    // 版本接口失败不影响仪表盘
+  }
+}
+
+const checkUpdate = async () => {
+  updateBusy.value = true
+  try {
+    coreUpdate.value = await run('检查更新中…', () => api<CoreUpdateInfo>('/admin/update/check'))
+    push(
+      coreUpdate.value.has_update ? `有新版本 ${coreUpdate.value.latest}` : '已是最新版本',
+      !coreUpdate.value.has_update,
+    )
+  } catch (e: any) {
+    push(e.message || '检查更新失败', false)
+  } finally {
+    updateBusy.value = false
+  }
+}
 
 const loadData = async () => {
   loading.value = true
@@ -46,6 +72,7 @@ const loadData = async () => {
 }
 onMounted(() => {
   host.value = location.host
+  loadVersion()
   loadData()
 })
 
@@ -134,6 +161,29 @@ useHead({ title: '仪表盘 · fanke 后台' })
             <el-button :icon="Setting" @click="navigateTo('/admin/settings')">站点设置</el-button>
           </div>
         </div>
+
+        <div class="panel card">
+          <h2>版本与更新</h2>
+          <p class="muted" style="margin-top: 0">
+            当前版本:<code>{{ version || '未知' }}</code>
+          </p>
+          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap">
+            <el-button size="small" :loading="updateBusy" @click="checkUpdate">检查更新</el-button>
+            <a v-if="coreUpdate?.page_url" :href="coreUpdate.page_url" target="_blank" rel="noopener">打开发布页</a>
+          </div>
+          <template v-if="coreUpdate">
+            <p v-if="coreUpdate.has_update" style="margin: 8px 0 0">
+              最新版本 <b>{{ coreUpdate.latest }}</b>
+              <span v-if="coreUpdate.date" class="muted">({{ coreUpdate.date }})</span>
+            </p>
+            <p v-else style="margin: 8px 0 0">已是最新版本</p>
+            <div v-if="coreUpdate.has_update && coreUpdate.notes" class="update-notes">{{ coreUpdate.notes }}</div>
+            <p v-if="coreUpdate.has_update" class="muted" style="margin: 6px 0 0; font-size: 13px">
+              升级命令:<code>sudo bash deploy/install.sh --update</code>。只更新后端与前端,保留
+              <code>extensions/</code> 插件目录、主题与媒体数据。
+            </p>
+          </template>
+        </div>
       </template>
 
       <div v-else class="panel card account-card">
@@ -170,6 +220,15 @@ useHead({ title: '仪表盘 · fanke 后台' })
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+.update-notes {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--el-fill-color-light, #f5f7fa);
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.6;
 }
 .account-card {
   display: grid;

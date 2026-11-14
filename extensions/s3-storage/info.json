@@ -10,7 +10,7 @@
    "date": "2026.10.27",
   "description": "提供 S3 兼容多桶上传，在插件详情页管理桶别名、凭证和默认桶，设置页提供配置入口；与图片处理插件按先处理后存储的固定顺序协作。",
   "url": "https://boke.masi.fan",
-  "update_url": "",
+  "update_url": "https://raw.githubusercontent.com/iammsf/fanke/main/updates.json",
   "favico": "favico.svg",
   "request": ["beforeMediaUpload", "addSettingsItems", "addUploadMediaMenuItem"]
 }

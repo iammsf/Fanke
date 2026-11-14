@@ -24,7 +24,13 @@ import (
 	"fanke/backend/internal/repo"
 )
 
-const maxExtPackage = 10 << 20 // 插件包上限 10MB
+const (
+	// 插件包可能内含编译好的 Go 子进程(如 s3-storage 约 9MB),故上限按二进制体积放宽;
+	// 仍然限制文件数与解压总量,且符号链接/路径穿越一律拒绝。
+	maxExtPackage = 30 << 20 // 上传包上限 30MB
+	maxExtFile    = 12 << 20 // 单文件上限 12MB
+	maxExtTotal   = 60 << 20 // 解压后总量上限 60MB
+)
 
 // extInfo 插件包 info.json 结构。request 字段声明所需 hook。
 type extInfo struct {
@@ -94,21 +100,24 @@ func readZip(data []byte) ([]extFileEntry, error) {
 		if f.FileInfo().IsDir() {
 			continue
 		}
-		if f.UncompressedSize64 > 2<<20 {
+		if f.UncompressedSize64 > maxExtFile {
 			return nil, fmt.Errorf("单文件过大: %s", f.Name)
 		}
 		total += int64(f.UncompressedSize64)
-		if total > 20<<20 {
+		if total > maxExtTotal {
 			return nil, errors.New("解压后总体积超限")
 		}
 		rc, err := f.Open()
 		if err != nil {
 			return nil, err
 		}
-		b, err := io.ReadAll(io.LimitReader(rc, 2<<20+1))
+		b, err := io.ReadAll(io.LimitReader(rc, maxExtFile+1))
 		rc.Close()
 		if err != nil {
 			return nil, err
+		}
+		if int64(len(b)) > maxExtFile {
+			return nil, fmt.Errorf("单文件过大: %s", f.Name)
 		}
 		out = append(out, extFileEntry{Name: f.Name, Data: b})
 	}
@@ -161,11 +170,11 @@ func read7z(data []byte) ([]extFileEntry, error) {
 			return errors.New("包内文件过多(>200)")
 		}
 		rel, _ := filepath.Rel(dst, p)
-		if info.Size() > 2<<20 {
+		if info.Size() > maxExtFile {
 			return fmt.Errorf("单文件过大: %s", filepath.ToSlash(rel))
 		}
 		total += info.Size()
-		if total > 20<<20 {
+		if total > maxExtTotal {
 			return errors.New("解压后总体积超限")
 		}
 		b, err := os.ReadFile(p)
@@ -477,38 +486,54 @@ func (a *App) CheckExtensionUpdate(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, http.StatusBadRequest, "该插件未配置 update_url")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.UpdateURL, nil)
-	if err != nil {
-		a.fail(w, http.StatusBadRequest, "update_url 非法")
-		return
-	}
-	req.Header.Set("User-Agent", "fanke-ext-updater/1.0")
 	// 用探测客户端:update_url 来自插件元数据,必须拦内网/回环并校验重定向目标(防 SSRF)。
-	resp, err := probeHTTPClient.Do(req)
+	data, err := fetchUpdateJSON(ctx, e.UpdateURL)
 	if err != nil {
 		a.fail(w, http.StatusBadGateway, "检查更新失败: "+err.Error())
 		return
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		a.fail(w, http.StatusBadGateway, fmt.Sprintf("update_url 返回 %d", resp.StatusCode))
-		return
-	}
-	var remote struct {
-		Version     string `json:"version"`
-		DownloadURL string `json:"download_url"`
-		Date        string `json:"date"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&remote); err != nil {
-		a.fail(w, http.StatusBadGateway, "update_url 返回格式错误(期望 JSON)")
+	remote, err := decodeExtUpdate(e.Slug, data)
+	if err != nil {
+		a.fail(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	hasUpdate := remote.Version != "" && remote.Version != e.Version
-	writeJSON(w, http.StatusOK, repo.ExtUpdate{
-		Version: remote.Version, DownloadURL: remote.DownloadURL, Date: remote.Date, HasUpdate: hasUpdate,
-	})
+	remote.HasUpdate = hasUpdate
+	writeJSON(w, http.StatusOK, remote)
+}
+
+// decodeExtUpdate 兼容两种 update_url 响应格式:
+//  1. 仓库共享清单 {"core": {...}, "plugins": {"<slug>": {...}}}(推荐,所有插件指向同一文件)
+//  2. 旧扁平格式 {"version","download_url","date"}(单个插件独立托管)
+func decodeExtUpdate(slug string, data []byte) (repo.ExtUpdate, error) {
+	var m updateManifest
+	if err := json.Unmarshal(data, &m); err == nil {
+		if entry, ok := m.Plugins[slug]; ok {
+			return repo.ExtUpdate{
+				Version: entry.Version, DownloadURL: entry.DownloadURL,
+				PageURL: entry.PageURL, Notes: entry.Notes, Date: entry.Date,
+			}, nil
+		}
+		if m.Core.Version != "" || len(m.Plugins) > 0 {
+			return repo.ExtUpdate{}, errors.New("更新清单中没有该插件")
+		}
+	}
+	var flat struct {
+		Version     string `json:"version"`
+		DownloadURL string `json:"download_url"`
+		PageURL     string `json:"page_url"`
+		Notes       string `json:"notes"`
+		Date        string `json:"date"`
+	}
+	if err := json.Unmarshal(data, &flat); err != nil || flat.Version == "" {
+		return repo.ExtUpdate{}, errors.New("更新地址返回格式错误(期望 version 或 plugins 清单)")
+	}
+	return repo.ExtUpdate{
+		Version: flat.Version, DownloadURL: flat.DownloadURL,
+		PageURL: flat.PageURL, Notes: flat.Notes, Date: flat.Date,
+	}, nil
 }
 
 // ---------- 插件静态资源(page/assets) ----------

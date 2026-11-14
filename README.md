@@ -132,6 +132,36 @@ sudo bash deploy/install.sh --update
 
 ---
 
+## 版本与更新
+
+- 后台仪表盘显示当前版本，管理员可点「检查更新」查询博客本体最新版本
+- 插件列表 / 插件详情页有各自的「检查更新」，显示远端版本、更新说明与发布页链接
+- 检查逻辑读取仓库根目录的 [updates.json](updates.json)，默认地址：
+  `https://raw.githubusercontent.com/iammsf/fanke/main/updates.json`
+  大陆网络不稳定时，可在配置中设置 `UPDATE_MANIFEST_URL` 指向 jsDelivr 等镜像
+- 本体升级仍通过部署脚本完成：
+
+  ```bash
+  sudo bash deploy/install.sh --update
+  ```
+
+  升级只重建后端二进制与前端静态文件，**不会覆盖或删除 `extensions/` 插件目录**，也不会动 `themes/`、`media/`、`state/`。插件更新时单独上传新的插件 zip 即可。
+
+### 发布新版本
+
+仓库带有 [release 工作流](.github/workflows/release.yml)，打标签即自动发布：
+
+```bash
+git tag v1.1.0
+git push origin v1.1.0
+```
+
+工作流会：构建 linux amd64/arm64 后端与前端 → 打包全部插件 zip（含对应架构的 Go 子进程）→ 生成并提交 `updates.json` → 创建 GitHub Release 并附上产物。
+
+首次使用前请在仓库 Settings → Actions → General 中把 Workflow permissions 设为 **Read and write**；若 `main` 有分支保护，需要放行 `github-actions[bot]` 的推送。
+
+---
+
 ## 配置项
 
 配置来源优先级：进程环境变量 > `/opt/fanke/state/fanke.env`。完整示例见 [deploy/fanke.env.example](deploy/fanke.env.example)。
@@ -149,6 +179,7 @@ sudo bash deploy/install.sh --update
 | `THUMB_DIR` | 系统临时目录 | 缩略图缓存目录 |
 | `THUMB_ALLOW_HOSTS` | 空 | 允许服务端代抓缩图的外部主机（逗号分隔，防 SSRF） |
 | `REDIS_URL` | 空 | 可选，多实例共享限流计数 |
+| `UPDATE_MANIFEST_URL` | GitHub `updates.json` | 更新清单地址；大陆网络不稳定时可换 jsDelivr 镜像 |
 | `INSECURE_COOKIE` | `false` | 纯 HTTP 部署需设为 `true`，否则浏览器不保存登录 Cookie |
 | `BOOTSTRAP_ADMIN_EMAIL/USERNAME/PASSWORD` | 空 / `admin` / 空 | 仅在用户表为空时自动创建管理员 |
 

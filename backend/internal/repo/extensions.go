@@ -33,6 +33,8 @@ type Extension struct {
 type ExtUpdate struct {
 	Version     string `json:"version"`
 	DownloadURL string `json:"download_url"`
+	PageURL     string `json:"page_url"`
+	Notes       string `json:"notes"`
 	Date        string `json:"date"`
 	HasUpdate   bool   `json:"has_update"`
 }

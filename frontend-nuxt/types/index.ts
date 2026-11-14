@@ -201,8 +201,22 @@ export interface Extension {
 export interface ExtensionUpdateInfo {
   version: string
   download_url: string
+  page_url?: string
+  notes?: string
   date: string
   has_update: boolean
+}
+
+// 博客本体更新检查结果
+export interface CoreUpdateInfo {
+  current: string
+  latest: string
+  date?: string
+  notes?: string
+  page_url?: string
+  download_url?: string
+  has_update: boolean
+  manifest_url?: string
 }
 
 // 图片焦点数据(与后端 image_focus hooks 对应)

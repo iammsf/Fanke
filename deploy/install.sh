@@ -458,10 +458,12 @@ install -d -m 0755 -o "$APP_NAME" -g "$APP_NAME" /var/cache/fanke-thumbs
 
 # ---------- 编译 ----------
 build_backend() {
-  log "编译后端(linux/$ARCH)..."
+  local ver
+  ver="$(git -C "$REPO_ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)"
+  log "编译后端(linux/$ARCH,版本 $ver)..."
   ( cd "$REPO_ROOT/backend" \
     && CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" go build -trimpath -buildvcs=false \
-       -ldflags "-s -w" -o "$APP_DIR/bin/api.new" ./cmd/api )
+       -ldflags "-s -w -X fanke/backend/internal/buildinfo.Version=$ver" -o "$APP_DIR/bin/api.new" ./cmd/api )
   chmod 0755 "$APP_DIR/bin/api.new"
   mv -f "$APP_DIR/bin/api.new" "$APP_DIR/bin/api"
 }
@@ -505,6 +507,8 @@ build_frontend
 [ "$SKIP_PLUGINS" -eq 1 ] || build_plugins
 
 # ---------- 静态目录 ----------
+# 注意:下面只重建前端静态目录;extensions/ 插件目录、themes/、media/、state/ 一律不碰,
+# 因此 --update 升级本体时不会覆盖或删除已安装的插件与数据。
 SITE_NAME="${DOMAIN:-$APP_NAME}"
 case "$PANEL" in
   baota)

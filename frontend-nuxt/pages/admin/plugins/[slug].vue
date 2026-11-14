@@ -326,8 +326,17 @@ useHead(() => ({ title: `${ext.value?.name || '插件'} · fanke 后台` }))
             <span v-if="!ext.hooks.length" class="muted">无</span>
           </div>
           <div v-if="update" class="muted" style="font-size: 13px">
-            <template v-if="update.has_update">远端版本 {{ update.version }}({{ update.date }})</template>
+            <template v-if="update.has_update">
+              远端版本 {{ update.version }}<span v-if="update.date">({{ update.date }})</span>
+              <template v-if="update.page_url">
+                · <a :href="update.page_url" target="_blank" rel="noopener">打开发布页</a>
+              </template>
+            </template>
             <template v-else>已是最新版本</template>
+            <div
+              v-if="update.has_update && update.notes"
+              style="white-space: pre-wrap; margin-top: 4px; line-height: 1.6"
+            >{{ update.notes }}</div>
           </div>
           <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px">
             <el-button v-if="ext.update_url" size="small" :disabled="busy" @click="checkUpdate">检查更新</el-button>

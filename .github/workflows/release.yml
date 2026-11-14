@@ -1,0 +1,155 @@
+name: release
+
+# 打 v* 标签即发布:构建博客本体(amd64/arm64)与全部插件安装包,
+# 生成 updates.json 更新清单并提交回 main,同时附到 GitHub Release。
+#
+# 发布步骤:
+#   git tag v1.1.0 && git push origin v1.1.0
+#
+# 注意:仓库 Settings → Actions → General 需允许 Workflow permissions 为
+# "Read and write permissions";若 main 有分支保护,请放行 github-actions[bot]。
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: |
+            backend/go.sum
+            extensions/s3-storage/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend-nuxt/package-lock.json
+
+      - name: 构建前端
+        working-directory: frontend-nuxt
+        run: |
+          npm ci --no-audit --no-fund
+          NUXT_TELEMETRY_DISABLED=1 NUXT_PUBLIC_API_BASE=/api/v1 npm run build
+
+      - name: 构建后端并打包本体
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            staging="dist/fanke-${VERSION}-linux-${arch}"
+            mkdir -p "$staging/bin" "$staging/web"
+            ( cd backend && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build \
+                -trimpath -buildvcs=false \
+                -ldflags "-s -w -X fanke/backend/internal/buildinfo.Version=${VERSION}" \
+                -o "../${staging}/bin/api" ./cmd/api )
+            # 本体只含 bin/api 与前端静态文件,不含 extensions/ 插件目录
+            cp -a frontend-nuxt/.output/public/. "$staging/web/"
+            tar -C dist -czf "dist/fanke-${VERSION}-linux-${arch}.tar.gz" "$(basename "$staging")"
+            rm -rf "$staging"
+          done
+
+      - name: 构建插件安装包
+        run: |
+          set -euo pipefail
+          for dir in extensions/*/; do
+            slug="$(basename "$dir")"
+            [ -f "$dir/info.json" ] || continue
+            if [ -f "$dir/go.mod" ] && [ -d "$dir/server" ]; then
+              for arch in amd64 arm64; do
+                ( cd "$dir" && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build \
+                    -trimpath -buildvcs=false -ldflags "-s -w" \
+                    -o "server/bin/linux-$arch/$slug-server" ./server )
+              done
+            fi
+            ( cd "$dir" && zip -qr "../../dist/$slug.zip" . )
+          done
+          ls -lh dist
+
+      - name: 生成更新清单
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import glob
+          import json
+          import os
+          import subprocess
+
+          tag = os.environ['VERSION']
+          repo = os.environ['GITHUB_REPOSITORY']
+          base = f'https://github.com/{repo}/releases/download/{tag}'
+          page = f'https://github.com/{repo}/releases/tag/{tag}'
+          date = subprocess.check_output(['date', '-u', '+%Y-%m-%d']).decode().strip()
+
+          core = {
+              'version': tag.lstrip('vV'),
+              'date': date,
+              'notes': f'发布 {tag}:后端与前端更新,插件目录保持不变。',
+              'page_url': page,
+              'download_url': f'{base}/fanke-{tag}-linux-amd64.tar.gz',
+              'sha256': '',
+          }
+          plugins = {}
+          for path in sorted(glob.glob('extensions/*/info.json')):
+              with open(path, encoding='utf-8') as fh:
+                  info = json.load(fh)
+              slug = info.get('slug') or os.path.basename(os.path.dirname(path))
+              plugins[slug] = {
+                  'version': info.get('version', ''),
+                  'date': info.get('date', ''),
+                  'notes': info.get('description', ''),
+                  'page_url': page,
+                  'download_url': f'{base}/{slug}.zip',
+              }
+          with open('updates.json', 'w', encoding='utf-8') as fh:
+              json.dump({'core': core, 'plugins': plugins}, fh, ensure_ascii=False, indent=2)
+              fh.write('\n')
+          print('已生成 updates.json:', core['version'], list(plugins))
+          PY
+
+      - name: 提交更新清单到 main
+        run: |
+          set -euo pipefail
+          cp updates.json /tmp/updates.json
+          git fetch origin main
+          git checkout -B main origin/main
+          cp /tmp/updates.json updates.json
+          if git diff --quiet -- updates.json; then
+            echo "更新清单无变化"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add updates.json
+          git commit -m "chore: 更新 ${VERSION} 发布清单"
+          git push origin main
+
+      - name: 创建 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            updates.json

@@ -46,6 +46,10 @@ type Config struct {
 
 	RedisURL string
 
+	// UpdateManifestURL 更新清单地址(默认 GitHub 仓库根目录 updates.json;
+	// 大陆网络可改为 jsDelivr 等镜像地址,格式一致)。
+	UpdateManifestURL string
+
 	InsecureCookie bool
 
 	BootstrapAdminEmail    string // 可选:自动化部署引导
@@ -82,6 +86,7 @@ func Load() *Config {
 		ImageCacheDir:          get("THUMB_DIR", filepath.Join(os.TempDir(), "fanke-thumbs")),
 		ThumbAllowHosts:        get("THUMB_ALLOW_HOSTS", ""),
 		RedisURL:               get("REDIS_URL", ""),
+		UpdateManifestURL:      get("UPDATE_MANIFEST_URL", ""),
 		InsecureCookie:         get("INSECURE_COOKIE", "false") == "true",
 		BootstrapAdminEmail:    get("BOOTSTRAP_ADMIN_EMAIL", ""),
 		BootstrapAdminUsername: get("BOOTSTRAP_ADMIN_USERNAME", "admin"),
