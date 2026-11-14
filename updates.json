@@ -1,18 +1,18 @@
 {
   "core": {
-    "version": "1.0.2",
+    "version": "1.0.3",
     "date": "2026-11-14",
-    "notes": "发布 v1.0.2:后端与前端更新,插件目录保持不变。",
-    "page_url": "https://github.com/iammsf/fanke/releases/tag/v1.0.2",
-    "download_url": "https://github.com/iammsf/fanke/releases/download/v1.0.2/fanke-v1.0.2-linux-amd64.tar.gz",
+    "notes": "发布 v1.0.3:后端与前端更新,插件目录保持不变。",
+    "page_url": "https://github.com/iammsf/Fanke/releases/tag/v1.0.3",
+    "download_url": "https://github.com/iammsf/Fanke/releases/download/v1.0.3/fanke-v1.0.3-linux-amd64.tar.gz",
     "download_urls": {
-      "amd64": "https://github.com/iammsf/fanke/releases/download/v1.0.2/fanke-v1.0.2-linux-amd64.tar.gz",
-      "arm64": "https://github.com/iammsf/fanke/releases/download/v1.0.2/fanke-v1.0.2-linux-arm64.tar.gz"
+      "amd64": "https://github.com/iammsf/Fanke/releases/download/v1.0.3/fanke-v1.0.3-linux-amd64.tar.gz",
+      "arm64": "https://github.com/iammsf/Fanke/releases/download/v1.0.3/fanke-v1.0.3-linux-arm64.tar.gz"
     },
-    "sha256": "9bb15868e4756215d682f10c234a1bd91933a1ed36244e7c5abcd9055ae0fb4c",
+    "sha256": "659fb4af888237065f9d6b5861236382fb7726d927ec7cc614d641c3e7a3f127",
     "sha256s": {
-      "amd64": "9bb15868e4756215d682f10c234a1bd91933a1ed36244e7c5abcd9055ae0fb4c",
-      "arm64": "2fe3e444af94f897bd60c7841590e03c7923b0eedf59d8f53f9f6cc60ee57f98"
+      "amd64": "659fb4af888237065f9d6b5861236382fb7726d927ec7cc614d641c3e7a3f127",
+      "arm64": "85435b078e8e4e7e7bfcde2da84556767e3ed6204f4284b146eb42b7567b8b87"
     }
   },
   "plugins": {
@@ -20,36 +20,36 @@
       "version": "1.0",
       "date": "2026.10.19",
       "notes": "为图片选择展示焦点,在特定裁切场景下重点展示图片的焦点部分。嵌入媒体库,支持 1:1 / 16:9 / 9:16 取景框与中心点标记,缩略图按容器比例自动选用对应焦点坐标。",
-      "page_url": "https://github.com/iammsf/fanke/releases/tag/v1.0.2",
-      "download_url": "https://github.com/iammsf/fanke/releases/download/v1.0.2/image-focus.zip"
+      "page_url": "https://github.com/iammsf/Fanke/releases/tag/v1.0.3",
+      "download_url": "https://github.com/iammsf/Fanke/releases/download/v1.0.3/image-focus.zip"
     },
     "image-processing": {
       "version": "1.3",
       "date": "2026.10.27",
       "notes": "上传时保留原图，为支持的静态图片生成等比且不放大的 WebP 派生图；在插件详情页配置处理开关、宽度列表与质量，设置页提供配置入口。",
-      "page_url": "https://github.com/iammsf/fanke/releases/tag/v1.0.2",
-      "download_url": "https://github.com/iammsf/fanke/releases/download/v1.0.2/image-processing.zip"
+      "page_url": "https://github.com/iammsf/Fanke/releases/tag/v1.0.3",
+      "download_url": "https://github.com/iammsf/Fanke/releases/download/v1.0.3/image-processing.zip"
     },
     "image-viewer": {
       "version": "1.5",
       "date": "2026.11.02",
       "notes": "用独立的 <fanke-img> 标签扩展插图与展示能力，和原生 <img> 互不干扰；支持图片说明、位置与样式定制、宽度与圆角设置，可选替换普通 <img>，并整合上传、媒体库选择和外链插图。",
-      "page_url": "https://github.com/iammsf/fanke/releases/tag/v1.0.2",
-      "download_url": "https://github.com/iammsf/fanke/releases/download/v1.0.2/image-viewer.zip"
+      "page_url": "https://github.com/iammsf/Fanke/releases/tag/v1.0.3",
+      "download_url": "https://github.com/iammsf/Fanke/releases/download/v1.0.3/image-viewer.zip"
     },
     "s3-storage": {
       "version": "1.3",
       "date": "2026.10.27",
       "notes": "提供 S3 兼容多桶上传，在插件详情页管理桶别名、凭证和默认桶，设置页提供配置入口；与图片处理插件按先处理后存储的固定顺序协作。",
-      "page_url": "https://github.com/iammsf/fanke/releases/tag/v1.0.2",
-      "download_url": "https://github.com/iammsf/fanke/releases/download/v1.0.2/s3-storage.zip"
+      "page_url": "https://github.com/iammsf/Fanke/releases/tag/v1.0.3",
+      "download_url": "https://github.com/iammsf/Fanke/releases/download/v1.0.3/s3-storage.zip"
     },
     "seo-optimizer": {
       "version": "1.5",
       "date": "2026.10.29",
       "notes": "文章编辑器内的 SEO 检查与 AI 建议面板：本地规则可配置，AI 建议需手动确认后写入标题/摘要。",
-      "page_url": "https://github.com/iammsf/fanke/releases/tag/v1.0.2",
-      "download_url": "https://github.com/iammsf/fanke/releases/download/v1.0.2/seo-optimizer.zip"
+      "page_url": "https://github.com/iammsf/Fanke/releases/tag/v1.0.3",
+      "download_url": "https://github.com/iammsf/Fanke/releases/download/v1.0.3/seo-optimizer.zip"
     }
   }
 }
