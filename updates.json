@@ -1,18 +1,18 @@
 {
   "core": {
-    "version": "1.0.6",
+    "version": "1.0.7",
     "date": "2026-11-14",
-    "notes": "发布 v1.0.6:后端与前端更新,插件目录保持不变。",
-    "page_url": "https://github.com/iammsf/Fanke/releases/tag/v1.0.6",
-    "download_url": "https://github.com/iammsf/Fanke/releases/download/v1.0.6/fanke-v1.0.6-linux-amd64.tar.gz",
+    "notes": "发布 v1.0.7:后端与前端更新,插件目录保持不变。",
+    "page_url": "https://github.com/iammsf/Fanke/releases/tag/v1.0.7",
+    "download_url": "https://github.com/iammsf/Fanke/releases/download/v1.0.7/fanke-v1.0.7-linux-amd64.tar.gz",
     "download_urls": {
-      "amd64": "https://github.com/iammsf/Fanke/releases/download/v1.0.6/fanke-v1.0.6-linux-amd64.tar.gz",
-      "arm64": "https://github.com/iammsf/Fanke/releases/download/v1.0.6/fanke-v1.0.6-linux-arm64.tar.gz"
+      "amd64": "https://github.com/iammsf/Fanke/releases/download/v1.0.7/fanke-v1.0.7-linux-amd64.tar.gz",
+      "arm64": "https://github.com/iammsf/Fanke/releases/download/v1.0.7/fanke-v1.0.7-linux-arm64.tar.gz"
     },
-    "sha256": "3f36b44bf703d8e0c635c6809b58ceeca27de160695730a4274c6561ff0d1c3d",
+    "sha256": "3bc5194e3b2c94fa05a14cde9b09c8c9890b07d317cacb9057c843391136f44f",
     "sha256s": {
-      "amd64": "3f36b44bf703d8e0c635c6809b58ceeca27de160695730a4274c6561ff0d1c3d",
-      "arm64": "6dfab707ed1f30acf2bd2ad78100d642d929cef1632fbe8f3dcfb7c625e7b390"
+      "amd64": "3bc5194e3b2c94fa05a14cde9b09c8c9890b07d317cacb9057c843391136f44f",
+      "arm64": "5409a5b7bdc208536402cb136dcc1e0594fe5ba7d6016c100e0623dc9bc820f3"
     }
   },
   "plugins": {
@@ -20,41 +20,41 @@
       "version": "1.0",
       "date": "2026.10.19",
       "notes": "为图片选择展示焦点,在特定裁切场景下重点展示图片的焦点部分。嵌入媒体库,支持 1:1 / 16:9 / 9:16 取景框与中心点标记,缩略图按容器比例自动选用对应焦点坐标。",
-      "page_url": "https://github.com/iammsf/Fanke/releases/tag/v1.0.6",
-      "download_url": "https://github.com/iammsf/Fanke/releases/download/v1.0.6/image-focus.zip",
-      "sha256": "6df342d877f1a359cc2a865d6ae07e1ff33dc3616d306e45c27185d39165a8fe"
+      "page_url": "https://github.com/iammsf/Fanke/releases/tag/v1.0.7",
+      "download_url": "https://github.com/iammsf/Fanke/releases/download/v1.0.7/image-focus.zip",
+      "sha256": "2a1ee41eafcae13dfccaef8c5173b3d217351de12dd9b57aa84a54a75d8fa659"
     },
     "image-processing": {
       "version": "1.3",
       "date": "2026.10.27",
       "notes": "上传时保留原图，为支持的静态图片生成等比且不放大的 WebP 派生图；在插件详情页配置处理开关、宽度列表与质量，设置页提供配置入口。",
-      "page_url": "https://github.com/iammsf/Fanke/releases/tag/v1.0.6",
-      "download_url": "https://github.com/iammsf/Fanke/releases/download/v1.0.6/image-processing.zip",
-      "sha256": "9133108ffac46e580ecd2ab8db30237a35a18a1bfb9dd30f22ae5513ba6fb14d"
+      "page_url": "https://github.com/iammsf/Fanke/releases/tag/v1.0.7",
+      "download_url": "https://github.com/iammsf/Fanke/releases/download/v1.0.7/image-processing.zip",
+      "sha256": "6cdee83882cddd1d7536e05e86d011dc0d1f61ef7ede8def9219194ffdbdfc7f"
     },
     "image-viewer": {
       "version": "1.5",
       "date": "2026.11.02",
       "notes": "用独立的 <fanke-img> 标签扩展插图与展示能力，和原生 <img> 互不干扰；支持图片说明、位置与样式定制、宽度与圆角设置，可选替换普通 <img>，并整合上传、媒体库选择和外链插图。",
-      "page_url": "https://github.com/iammsf/Fanke/releases/tag/v1.0.6",
-      "download_url": "https://github.com/iammsf/Fanke/releases/download/v1.0.6/image-viewer.zip",
-      "sha256": "85ab381be8551d117ea5a28e57104dfab3e1cf7aa9fe26450da241ac6bbc2cf4"
+      "page_url": "https://github.com/iammsf/Fanke/releases/tag/v1.0.7",
+      "download_url": "https://github.com/iammsf/Fanke/releases/download/v1.0.7/image-viewer.zip",
+      "sha256": "1d759e3c3534055afa7b6725b7a35e3aa3d2104daa37bb5523a3e02bb4e83374"
     },
     "s3-storage": {
       "version": "1.3",
       "date": "2026.10.27",
       "notes": "提供 S3 兼容多桶上传，在插件详情页管理桶别名、凭证和默认桶，设置页提供配置入口；与图片处理插件按先处理后存储的固定顺序协作。",
-      "page_url": "https://github.com/iammsf/Fanke/releases/tag/v1.0.6",
-      "download_url": "https://github.com/iammsf/Fanke/releases/download/v1.0.6/s3-storage.zip",
-      "sha256": "56a19c357dc7b854e9ae8b61b4599e75fea1912df6b6fc1b0c11b8be68dc05f1"
+      "page_url": "https://github.com/iammsf/Fanke/releases/tag/v1.0.7",
+      "download_url": "https://github.com/iammsf/Fanke/releases/download/v1.0.7/s3-storage.zip",
+      "sha256": "f8aeada9ed0327539a70e6b5a1b66279471c7af09e78548a995cab83fa38f5e4"
     },
     "seo-optimizer": {
       "version": "1.5",
       "date": "2026.10.29",
       "notes": "文章编辑器内的 SEO 检查与 AI 建议面板：本地规则可配置，AI 建议需手动确认后写入标题/摘要。",
-      "page_url": "https://github.com/iammsf/Fanke/releases/tag/v1.0.6",
-      "download_url": "https://github.com/iammsf/Fanke/releases/download/v1.0.6/seo-optimizer.zip",
-      "sha256": "bda3b857999f3d4e3f3abfc33886fec008d84e3afa9d63b67e40b4d8a40282b9"
+      "page_url": "https://github.com/iammsf/Fanke/releases/tag/v1.0.7",
+      "download_url": "https://github.com/iammsf/Fanke/releases/download/v1.0.7/seo-optimizer.zip",
+      "sha256": "f121080d555a21e381f024418e83e186124ba7addb67e49c39813b01deae0792"
     }
   },
   "themes": {
@@ -62,9 +62,9 @@
       "version": "1.0.0",
       "date": "2026-11-15",
       "notes": "Material You (Material 3) 全局主题：文章页与管理页统一紫色调、圆角、填充式控件与柔和阴影。",
-      "page_url": "https://github.com/iammsf/Fanke/releases/tag/v1.0.6",
-      "download_url": "https://github.com/iammsf/Fanke/releases/download/v1.0.6/theme-material-you.zip",
-      "sha256": "e20554d687f5912cbe6d4348d48bab1429d951e32e3aab89edfb901fb9865efc"
+      "page_url": "https://github.com/iammsf/Fanke/releases/tag/v1.0.7",
+      "download_url": "https://github.com/iammsf/Fanke/releases/download/v1.0.7/theme-material-you.zip",
+      "sha256": "e3e36fb149e8c3b4fd89292b22e4ba4bad844741e78badfb59b2079b594ed334"
     }
   }
 }
