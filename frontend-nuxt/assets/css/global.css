@@ -275,13 +275,14 @@ textarea.input {
 .el-button {
   line-height: 1;
 }
-/* 按钮内文字:不用像素偏移,改用字体自然行高建立行盒,再交给 flex 垂直居中。
-   line-height:1 会把中文黑体的行盒压扁,导致字形视觉重心偏上;normal 则按字体
-   ascent/descent 正常分配上下留白,100% 与 125% 缩放下实测偏差均在 0.5px 内。 */
+/* 按钮内文字:用字体自然行高建立行盒(flex 负责居中),再做 0.5px 亚像素光学修正。
+   中文字形墨迹相对行盒中心天然低 0.4~0.7px,不同缩放下来回摆;0.5px 上移可把
+   100%~200% 缩放的偏差都收敛到 ±0.5px 以内。 */
 .el-button > span {
   display: inline-flex;
   align-items: center;
   line-height: normal;
+  transform: translateY(-0.5px);
 }
 .el-button .el-icon {
   display: inline-flex;
