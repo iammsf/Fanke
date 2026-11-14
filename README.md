@@ -146,7 +146,7 @@ sudo bash deploy/install.sh --update
 
 管理页点「立即升级」后，后端会：
 
-1. 从 GitHub Release 下载当前架构的 `fanke-<版本>-linux-<arch>.tar.gz`
+1. 从 GitHub `latest` Release 下载当前架构的 `fanke-linux-<arch>.tar.gz`
 2. 校验清单里的 `sha256`
 3. 只替换 `bin/api` 与前端静态目录
 4. 退出进程，由 systemd 拉起新二进制
