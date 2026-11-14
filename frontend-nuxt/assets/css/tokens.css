@@ -1,0 +1,49 @@
+/* Element Plus 风格设计令牌(内置默认主题) */
+:root {
+  --primary: #4f7cff;
+  --primary-soft: rgba(79, 124, 255, 0.12);
+  --bg: #f4f6fb;
+  --surface: #ffffff;
+  --surface-2: #eef1f8;
+  --text: #263238;
+  --muted: #6b7a8c;
+  --border: #e2e8f2;
+  --shadow: 0 2px 8px rgba(38, 50, 56, 0.08), 0 8px 24px rgba(38, 50, 56, 0.06);
+  --radius: 14px;
+  --font: -apple-system, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, "Noto Color Emoji", sans-serif;
+  --mono: "JetBrains Mono", "Fira Code", Consolas, "Courier New", "Noto Color Emoji", monospace;
+  --maxw: 1080px;
+
+  /* Element Plus 主题桥接:主色/圆角跟随站点令牌 */
+  --el-color-primary: var(--primary);
+  --el-color-primary-light-3: #7b9bff;
+  --el-color-primary-light-5: #a3bcff;
+  --el-color-primary-light-7: #c7d6ff;
+  --el-color-primary-light-8: #dbe4ff;
+  --el-color-primary-light-9: #eef2ff;
+  --el-color-primary-dark-2: #3f63cc;
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 6px;
+  --el-font-family: var(--font);
+}
+
+[data-theme='dark'] {
+  --primary: #8ab0ff;
+  --primary-soft: rgba(138, 176, 255, 0.16);
+  --bg: #14181f;
+  --surface: #1d222b;
+  --surface-2: #262c38;
+  --text: #dfe6ef;
+  --muted: #93a1b1;
+  --border: #2d3440;
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.25);
+
+  /* Element Plus 暗色变量(html.dark 由 dark/css-vars.css 提供,此处桥接主色) */
+  --el-color-primary: var(--primary);
+  --el-color-primary-light-3: #6f96e8;
+  --el-color-primary-light-5: #5378c9;
+  --el-color-primary-light-7: #3c5a9e;
+  --el-color-primary-light-8: #2f447a;
+  --el-color-primary-light-9: #263451;
+  --el-color-primary-dark-2: #a3c0ff;
+}

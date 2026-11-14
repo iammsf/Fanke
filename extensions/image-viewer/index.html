@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>更好用的&lt;img&gt;标签 · 配置</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 22px;
+    font: 14px/1.6 -apple-system, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: #263238; background: #f4f6fb;
+  }
+  .card { background: #fff; border: 1px solid #e2e8f2; border-radius: 14px; padding: 18px 20px; margin-bottom: 16px; }
+  h2 { font-size: 15px; margin: 0 0 12px; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  label { color: #6b7a8c; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
+  select, input[type="text"], input[type="number"] {
+    height: 34px; padding: 0 10px; border: 1px solid #e2e8f2; border-radius: 8px;
+    background: #f6f8fc; font: inherit; color: inherit;
+  }
+  input[type="color"] { width: 40px; height: 34px; padding: 2px; border: 1px solid #e2e8f2; border-radius: 8px; background: #f6f8fc; }
+  input[type="number"] { width: 84px; }
+  button {
+    height: 36px; padding: 0 18px; border: 0; border-radius: 999px; cursor: pointer;
+    background: #4f7cff; color: #fff; font: inherit;
+  }
+  button.ghost { background: #fff; color: #263238; border: 1px solid #e2e8f2; }
+  .sty-str { width: 100%; font-family: Consolas, monospace; }
+  .preview-box { border: 1px dashed #c9d4e5; border-radius: 10px; padding: 16px; background: #fafbfe; }
+  .pv-fig { margin: 0; display: inline-block; max-width: 100%; }
+  .pv-fig img { display: block; width: 220px; height: 130px; object-fit: cover; background: linear-gradient(135deg,#c7d6ff,#eef2ff); border-radius: 8px; }
+  .pv-cap { font-size: 13px; color: #6b7a8c; padding: 4px 2px; }
+  .pv-top .pv-cap { order: -1; }
+  .pv-fig { display: inline-flex; flex-direction: column; }
+  code { background: #eef1f8; border-radius: 5px; padding: 1px 6px; font-size: 12.5px; }
+  .muted { color: #6b7a8c; font-size: 12.5px; }
+  table.toks { border-collapse: collapse; width: 100%; }
+  table.toks td, table.toks th { border: 1px solid #e2e8f2; padding: 6px 10px; font-size: 13px; text-align: left; }
+  table.toks th { background: #eef1f8; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h2>默认说明位置(des_pos)</h2>
+  <div class="row">
+    <label>垂直
+      <select id="posV">
+        <option value="bottom">bottom(图下)</option>
+        <option value="top">top(图上)</option>
+      </select>
+    </label>
+    <label>水平
+      <select id="posH">
+        <option value="middle">middle(居中,兼容 mid)</option>
+        <option value="left">left(居左)</option>
+        <option value="right">right(居右)</option>
+      </select>
+    </label>
+  </div>
+</div>
+
+<div class="card">
+  <h2>默认说明样式(des_sty)</h2>
+  <div class="row">
+    <label><input type="checkbox" id="sHidden" /> hidden(隐藏说明)</label>
+    <label><input type="checkbox" id="sBold" /> b(加粗)</label>
+    <label><input type="checkbox" id="sItalic" /> i(斜体)</label>
+  </div>
+  <div class="row">
+    <label>字号 fs <input type="number" id="sFs" min="10" max="40" placeholder="px" /></label>
+    <label>文字色 c <input type="color" id="sC" value="#6b7a8c" /></label>
+    <label>背景色 bg <input type="color" id="sBg" value="#f4f6fb" /></label>
+    <label>描边色 bd <input type="color" id="sBd" value="#e2e8f2" /></label>
+    <label>图宽 w% <input type="number" id="sW" min="10" max="100" placeholder="%" /></label>
+    <label>圆角 r <input type="number" id="sR" min="0" max="40" placeholder="px" /></label>
+  </div>
+  <div class="row">
+    <input type="text" id="styRaw" class="sty-str" placeholder='最终 des_sty 字符串,可直接手改,如 "fs=13,c=#666,bg=#f5f5f5,b"' />
+  </div>
+  <div class="row">
+    <button id="saveBtn">保存配置</button>
+    <button class="ghost" id="loadBtn">重新读取</button>
+    <span class="muted" id="stateTip"></span>
+  </div>
+</div>
+
+<div class="card">
+  <h2>原生 img 标签</h2>
+  <div class="row">
+    <label><input type="checkbox" id="replaceImg" /> 替换正文中的普通 &lt;img&gt; 标签(按本插件样式渲染)</label>
+  </div>
+  <p class="muted" style="margin:8px 0 0">关闭时只处理 &lt;fanke-img&gt;,普通 &lt;img&gt; 保持原样;开启后没有使用插件标签的图片也会套用上面的默认位置与样式。</p>
+</div>
+
+<div class="card">
+  <h2>效果预览</h2>
+  <div class="preview-box">
+    <figure class="pv-fig" id="pvFig">
+      <span class="pv-cap" id="pvCap">图片描述文字</span>
+      <img alt="示例图" />
+    </figure>
+  </div>
+</div>
+
+<div class="card">
+  <h2>使用方法</h2>
+  <p class="muted" style="margin:0 0 10px">
+    文章正文中书写(<b>顶格书写,行首不要缩进</b>,否则会被 Markdown 当作代码块;说明文字写在标签内,也可用 des="…" 属性):
+  </p>
+  <p><code>&lt;fanke-img src="https://…/a.jpg" alt="A" des_pos="middle bottom" des_sty="fs=13,c=#666"&gt;图片描述&lt;/fanke-img&gt;</code></p>
+  <table class="toks">
+    <tr><th>token</th><th>含义</th><th>示例</th></tr>
+    <tr><td>hidden</td><td>隐藏说明文字</td><td>des_sty="hidden"</td></tr>
+    <tr><td>fs=像素</td><td>说明字号</td><td>fs=13</td></tr>
+    <tr><td>c=颜色</td><td>说明文字颜色</td><td>c=#666</td></tr>
+    <tr><td>bg=颜色</td><td>说明背景色</td><td>bg=#f5f5f5</td></tr>
+    <tr><td>bd=颜色</td><td>说明描边(1px solid)</td><td>bd=#ddd</td></tr>
+    <tr><td>b / i</td><td>加粗 / 斜体</td><td>des_sty="b,i"</td></tr>
+    <tr><td>w=百分比</td><td>图片宽度(相对正文)</td><td>w=60</td></tr>
+    <tr><td>r=像素</td><td>图片圆角</td><td>r=12</td></tr>
+  </table>
+  <p class="muted">标签的 des_pos 覆盖默认位置;des_sty 按 token 合并:标签写了哪些 token 就覆盖哪些,其余沿用此处默认值(例如默认 b,fs=16,标签只写 c=#666 时仍会加粗、字号 16px)。多个样式 token 用逗号或空格分隔。</p>
+  <p class="muted">默认值在文章渲染时套用:改完这里保存后,已发布文章里没有写 des_pos / des_sty 的图片会立即跟着变化,不需要重新保存文章。</p>
+</div>
+
+<div class="card">
+  <h2>1.5 更新记录 · 2026.11.02</h2>
+  <p class="muted">插件标签改为独立的 &lt;fanke-img&gt;说明&lt;/fanke-img&gt;,不再占用原生 &lt;img&gt;,避免与普通图片互相干扰。</p>
+  <p class="muted">编辑器插图默认写入 &lt;fanke-img&gt;;新增「替换正文中的普通 &lt;img&gt; 标签」开关,开启后普通图片也按插件样式渲染。</p>
+</div>
+
+<div class="card">
+  <h2>1.4 更新记录 · 2026.10.31</h2>
+  <p class="muted">修复文章页读取默认配置失败：公开通道 store.get_batch 的返回值是 {ok,data},此前按平铺结构解析导致默认 des_sty 一直为空。</p>
+  <p class="muted">标签 des_sty 改为按 token 与默认配置合并：标签没写的 token（如 fs、b）继续用默认值，不再整段覆盖。</p>
+</div>
+
+<div class="card">
+  <h2>1.3 更新记录 · 2026.10.31</h2>
+  <p class="muted">默认位置与样式改为渲染时套用插件配置:修改默认值后,已发布文章中未自定义的图片自动生效。</p>
+  <p class="muted">后端保存时只补 &lt;/img&gt; 闭合标签,不再把 des_pos="middle bottom" 写死进正文;历史文章里由旧版本自动写入的默认 des_pos 已一次性清理。</p>
+</div>
+
+<div class="card">
+  <h2>1.2 更新记录 · 2026.10.27</h2>
+  <p class="muted">未设置 des_pos 时使用默认 middle bottom(水平居中、垂直图下);已保存的自定义全局默认位置仍有效,兼容旧配置 mid,标签显式属性优先。</p>
+  <p class="muted">显式闭合的 &lt;img&gt;说明&lt;/img&gt; 即使省略 des_pos 和 des_sty 也会应用插件默认效果;普通未闭合且无 des / des_pos / des_sty 属性的图片不转换。</p>
+</div>
+
+<div class="card">
+  <h2>1.1 更新记录（补录） · 2026.10.23</h2>
+  <p class="muted">增加更多 Hook 扩展点，支持保存前检查与操作成功后的扩展。</p>
+  <p class="muted">当前版本通过 request 声明 beforePostCreate / beforePostUpdate，由后端 Go 处理器在文章创建、更新前为插件图片补齐 &lt;/img&gt; 闭合标签，保留显式位置与样式，普通图片不变。禁用、未初始化或未声明订阅时不触发。</p>
+  <p class="muted">此处为历史日志补录；当前后端生命周期的完整范围与执行规则见插件开发文档，不表示所有当前事件均于该历史日期发布。生命周期由后端触发，不通过 iframe JavaScript 订阅。</p>
+</div>
+
+<script src="./app.js"></script>
+</body>
+</html>

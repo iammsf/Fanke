@@ -1,0 +1,16 @@
+{
+  "name": "S3 对象存储",
+  "slug": "s3-storage",
+  "author": "電腦玩家Stan",
+  "version": "1.3",
+  "protocol_version": 1,
+  "trusted_process": true,
+  "entrypoint": "server/bin/${goos}-${goarch}/s3-storage-server",
+  "capabilities": ["storage.save", "storage.open", "storage.delete", "storage.list", "storage.head", "storage.setCacheControl", "storage.listBuckets", "storage.test"],
+   "date": "2026.10.27",
+  "description": "提供 S3 兼容多桶上传，在插件详情页管理桶别名、凭证和默认桶，设置页提供配置入口；与图片处理插件按先处理后存储的固定顺序协作。",
+  "url": "https://boke.masi.fan",
+  "update_url": "",
+  "favico": "favico.svg",
+  "request": ["beforeMediaUpload", "addSettingsItems", "addUploadMediaMenuItem"]
+}

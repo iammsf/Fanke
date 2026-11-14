@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+
+Disallow: /admin/
+Disallow: /api/
+Disallow: /search/
+Disallow: /s3-storage/
+Disallow: /image-processing/
+
+# 部署后请把下面这一行改成你的站点域名,例如:
+# Sitemap: https://example.com/sitemap.xml

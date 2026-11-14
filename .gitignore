@@ -1,0 +1,43 @@
+# 环境与密钥
+.env
+*.env.local
+
+# Go 构建产物
+backend/api
+backend/api.exe
+backend/fanke-api
+backend/fanke-api.exe
+backend/fanke-api-linux
+backend/migrate-wp
+backend/migrate-wp.exe
+backend/bin/
+*.test
+
+# Node / Nuxt 构建产物
+frontend-nuxt/node_modules/
+frontend-nuxt/.nuxt/
+frontend-nuxt/.output/
+frontend-nuxt/dist/
+frontend-nuxt/nuxt-static.tar.gz
+frontend-nuxt/deploy.log
+
+# 插件构建产物(打包/编译)
+extensions/*.zip
+extensions/*/server/bin/
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 个人工作目录与本地产物(不随仓库分发)
+.trae/
+.screenshots/
+fanmail-landing/
+zz_terms.html
+state/
+data/
+*.tar.gz
+*.7z
+deploy/.env

@@ -1,0 +1,67 @@
+# fanke 站点配置(由 deploy/install.sh 生成,可直接修改)
+# 占位符:__SERVER_NAME__ 站点域名;__ROOT__ 前端静态目录;__PORT__ 后端端口
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __SERVER_NAME__;
+
+    root __ROOT__;
+    index index.html;
+
+    # 上传上限(与后端保持一致)
+    client_max_body_size 100m;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    # 后端 API:同域反代,保留原始路径
+    location /api/ {
+        proxy_pass http://127.0.0.1:__PORT__;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # AI 对话/长回答需要较长读超时
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_buffering off;
+    }
+
+    location = /healthz {
+        proxy_pass http://127.0.0.1:__PORT__;
+        proxy_set_header Host $host;
+    }
+
+    # 本地媒体卷
+    location /uploads/ {
+        proxy_pass http://127.0.0.1:__PORT__;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    # 按需缩图(WebP)
+    location /img {
+        proxy_pass http://127.0.0.1:__PORT__;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    # 动态 sitemap
+    location = /sitemap.xml {
+        proxy_pass http://127.0.0.1:__PORT__;
+        proxy_set_header Host $host;
+    }
+
+    # 构建产物带内容哈希,可长期缓存
+    location /_nuxt/ {
+        try_files $uri =404;
+        expires 30d;
+        add_header Cache-Control "public, max-age=2592000, immutable";
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

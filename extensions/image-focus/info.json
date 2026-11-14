@@ -1,0 +1,25 @@
+{
+  "name": "图片焦点选择器",
+  "slug": "image-focus",
+  "author": "電腦玩家Stan",
+  "version": "1.0",
+  "date": "2026.10.19",
+  "description": "为图片选择展示焦点,在特定裁切场景下重点展示图片的焦点部分。嵌入媒体库,支持 1:1 / 16:9 / 9:16 取景框与中心点标记,缩略图按容器比例自动选用对应焦点坐标。",
+  "url": "https://boke.masi.fan",
+  "update_url": "",
+  "favico": "favico.svg",
+  "request": [
+    "store.ensure_table",
+    "store.save",
+    "store.get",
+    "store.get_batch",
+    "store.list",
+    "store.import",
+    "store.export",
+    "store.dedup",
+    "store.delete",
+    "store.stats",
+    "media.list",
+    "http.check_url"
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "图片处理",
+  "slug": "image-processing",
+  "author": "電腦玩家Stan",
+  "version": "1.3",
+  "protocol_version": 1,
+  "trusted_process": true,
+  "entrypoint": "server/bin/${goos}-${goarch}/image-processing-server",
+  "capabilities": ["image.process"],
+  "dependencies": ["cwebp"],
+   "date": "2026.10.27",
+  "description": "上传时保留原图，为支持的静态图片生成等比且不放大的 WebP 派生图；在插件详情页配置处理开关、宽度列表与质量，设置页提供配置入口。",
+  "url": "https://boke.masi.fan",
+  "update_url": "",
+  "favico": "favico.svg",
+  "request": ["beforeMediaUpload", "addSettingsItems"]
+}
