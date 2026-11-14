@@ -146,7 +146,7 @@ sudo bash deploy/install.sh --update
 
 管理页点「立即升级」后，后端会：
 
-1. 从 GitHub `latest` Release 下载当前架构的 `fanke-linux-<arch>.tar.gz`
+1. 从 GitHub `latest` Release 下载当前架构的 `fanke-<构建号>-linux-<arch>.tar.gz`
 2. 校验清单里的 `sha256`
 3. 只替换 `bin/api` 与前端静态目录
 4. 退出进程，由 systemd 拉起新二进制
@@ -163,16 +163,16 @@ sudo bash deploy/install.sh --update
 
 ### 发布新版本
 
-仓库只保留一个 `latest` Release，不再打 `v1.2.3` 这类标签。产物文件名固定（`fanke-linux-amd64.tar.gz`、`fanke-linux-arm64.tar.gz`、插件与主题 zip），每次构建覆盖上一次。
+仓库只保留一个 `latest` Release，不再打 `v1.2.3` 这类标签。版本号用构建时间戳（UTC，如 `202611150235`），仅用于判断新旧；后台显示的就是这个构建号。
 
-版本号用构建时间戳（UTC，如 `202611150235`），仅用于判断新旧；后台显示的就是这个构建号。
+产物名带构建号（`fanke-<构建号>-linux-amd64.tar.gz`、`<插件>-<构建号>.zip`、`theme-<主题>-<构建号>.zip`），Release 里只保留最近 2 个构建的产物——这样即使 `updates.json` 被 CDN 缓存几分钟，旧清单指向的地址依然有效，不会下载到 sha256 不符的文件。
 
 触发方式：
 
 - push 到 `main` 且改动 `backend/` 或 `frontend-nuxt/` 时自动构建发布
 - 只改插件/主题时不会自动构建，需要到 Actions 页面手动 Run workflow
 
-工作流会：构建 linux amd64/arm64 后端与前端 → 打包全部插件 zip（含对应架构的 Go 子进程）→ 生成并提交 `updates.json` → 覆盖 `latest` Release 产物。
+工作流会：构建 linux amd64/arm64 后端与前端 → 打包全部插件 zip（含对应架构的 Go 子进程）→ 覆盖 `latest` Release 产物 → 清理旧 Release / `v*` 标签 / 过期产物 → 生成并提交 `updates.json`。
 
 首次使用前请在仓库 Settings → Actions → General 中把 Workflow permissions 设为 **Read and write**；若 `main` 有分支保护，需要放行 `github-actions[bot]` 的推送。
 

@@ -70,7 +70,7 @@ jobs:
                 -o "../${staging}/bin/api" ./cmd/api )
             # 本体只含 bin/api 与前端静态文件,不含 extensions/ 插件目录
             cp -a frontend-nuxt/.output/public/. "$staging/web/"
-            tar -C dist -czf "dist/fanke-linux-${arch}.tar.gz" "$(basename "$staging")"
+            tar -C dist -czf "dist/fanke-${VERSION}-linux-${arch}.tar.gz" "$(basename "$staging")"
             rm -rf "$staging"
           done
 
@@ -87,13 +87,13 @@ jobs:
                     -o "server/bin/linux-$arch/$slug-server" ./server )
               done
             fi
-            ( cd "$dir" && zip -qr "../../dist/$slug.zip" . )
+            ( cd "$dir" && zip -qr "../../dist/${slug}-${VERSION}.zip" . )
           done
           for dir in themes/*/; do
             [ -d "$dir" ] || continue
             slug="$(basename "$dir")"
             [ -f "$dir/info.json" ] || continue
-            ( cd "$dir" && zip -qr "../../dist/theme-$slug.zip" . )
+            ( cd "$dir" && zip -qr "../../dist/theme-${slug}-${VERSION}.zip" . )
           done
           ls -lh dist
 
@@ -120,8 +120,10 @@ jobs:
               return h.hexdigest()
 
           archs = ('amd64', 'arm64')
-          urls = {a: f'{base}/fanke-linux-{a}.tar.gz' for a in archs}
-          sums = {a: sha256_file(f'dist/fanke-linux-{a}.tar.gz') for a in archs}
+          # 产物带构建号:清单可能被 CDN 缓存几分钟,旧地址仍能命中上一个构建,
+          # 不会出现 sha256 与文件不符。
+          urls = {a: f'{base}/fanke-{version}-linux-{a}.tar.gz' for a in archs}
+          sums = {a: sha256_file(f'dist/fanke-{version}-linux-{a}.tar.gz') for a in archs}
           core = {
               'version': version,
               'date': date,
@@ -142,8 +144,8 @@ jobs:
                   'date': info.get('date', ''),
                   'notes': info.get('description', ''),
                   'page_url': page,
-                  'download_url': f'{base}/{slug}.zip',
-                  'sha256': sha256_file(f'dist/{slug}.zip'),
+                  'download_url': f'{base}/{slug}-{version}.zip',
+                  'sha256': sha256_file(f'dist/{slug}-{version}.zip'),
               }
           themes = {}
           for path in sorted(glob.glob('themes/*/info.json')):
@@ -155,8 +157,8 @@ jobs:
                   'date': info.get('date', ''),
                   'notes': info.get('description', ''),
                   'page_url': page,
-                  'download_url': f'{base}/theme-{slug}.zip',
-                  'sha256': sha256_file(f'dist/theme-{slug}.zip'),
+                  'download_url': f'{base}/theme-{slug}-{version}.zip',
+                  'sha256': sha256_file(f'dist/theme-{slug}-{version}.zip'),
               }
           with open('updates.json', 'w', encoding='utf-8') as fh:
               json.dump({'core': core, 'plugins': plugins, 'themes': themes}, fh, ensure_ascii=False, indent=2)
@@ -164,48 +166,72 @@ jobs:
           print('已生成 updates.json:', core['version'], list(plugins), list(themes))
           PY
 
-      - name: 清理历史 Release 与 v* 标签
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          api="https://api.github.com/repos/$REPO"
-          auth="Authorization: Bearer $GH_TOKEN"
-          # 只保留 latest,其余 Release 全部删除
-          curl -fsS -H "$auth" "$api/releases?per_page=100" \
-            | python3 -c "import json,sys;[print(r['id'], r['tag_name']) for r in json.load(sys.stdin)]" > /tmp/rels.txt
-          while read -r id tag; do
-            [ -n "$id" ] || continue
-            [ "$tag" = "latest" ] && continue
-            curl -fsS -X DELETE -H "$auth" "$api/releases/$id"
-            echo "deleted release $tag"
-          done < /tmp/rels.txt
-          # 删除 v1.2.3 这类历史标签
-          curl -fsS -H "$auth" "$api/git/refs/tags" \
-            | python3 -c "import json,sys;[print(r['ref']) for r in json.load(sys.stdin)]" > /tmp/refs.txt
-          while read -r ref; do
-            [ -n "$ref" ] || continue
-            case "$ref" in
-              refs/tags/v*)
-                curl -fsS -X DELETE -H "$auth" "$api/git/refs/${ref#refs/}"
-                echo "deleted tag $ref"
-                ;;
-            esac
-          done < /tmp/refs.txt
-
       - name: 发布 latest
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
           name: latest
           body: |
-            滚动发布,构建号 `${{ env.VERSION }}`。产物名称固定,安装/升级始终取最新一次构建。
+            滚动发布,构建号 `${{ env.VERSION }}`。安装与在线升级始终取最新构建。
           make_latest: true
           files: |
             dist/*.tar.gz
             dist/*.zip
             updates.json
+
+      - name: 清理历史 Release 与旧产物
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          KEEP_BUILDS: '2'
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import urllib.request
+
+          repo = os.environ['REPO']
+          token = os.environ['GH_TOKEN']
+          keep_builds = int(os.environ.get('KEEP_BUILDS', '2'))
+          api = f'https://api.github.com/repos/{repo}'
+
+          def call(path, method='GET'):
+              req = urllib.request.Request(api + path, method=method, headers={
+                  'Authorization': f'Bearer {token}',
+                  'Accept': 'application/vnd.github+json',
+                  'User-Agent': 'fanke-ci',
+              })
+              with urllib.request.urlopen(req) as resp:
+                  body = resp.read()
+              return json.loads(body) if body else None
+
+          # 1) 只保留 latest,其余 Release 全部删除
+          for rel in call('/releases?per_page=100'):
+              if rel['tag_name'] != 'latest':
+                  call(f"/releases/{rel['id']}", 'DELETE')
+                  print('deleted release', rel['tag_name'])
+
+          # 2) 删除 v1.2.3 这类历史标签
+          for ref in call('/git/refs/tags'):
+              if ref['ref'].startswith('refs/tags/v'):
+                  call('/git/refs/' + ref['ref'][len('refs/'):], 'DELETE')
+                  print('deleted tag', ref['ref'])
+
+          # 3) latest 里只保留最近若干个构建的产物:清单可能被缓存几分钟,
+          #    旧构建的下载地址仍需有效,否则会撞上 sha256 不符。
+          rel = call('/releases/tags/latest')
+          builds = sorted({m.group(1) for a in rel['assets']
+                           if (m := re.search(r'(\d{12})', a['name']))}, reverse=True)
+          keep = set(builds[:keep_builds])
+          for a in rel['assets']:
+              if a['name'] == 'updates.json':
+                  continue
+              m = re.search(r'(\d{12})', a['name'])
+              if m is None or m.group(1) not in keep:
+                  call(f"/releases/assets/{a['id']}", 'DELETE')
+                  print('deleted asset', a['name'])
+          PY
 
       - name: 提交更新清单到 main
         run: |
