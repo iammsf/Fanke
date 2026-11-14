@@ -1,24 +1,13 @@
-// 布局启动逻辑:加载设置 → 注入运行时主题(上传主题)→ 可选注入用户插件 CSS/JS
+// 布局启动逻辑:加载设置 → 注入站点主题(仅文章页)→ 可选注入用户插件 CSS/JS
 export function useSiteBoot(injectPlugins = false) {
   const { load } = useSettings()
   const api = usePublicApi()
+  const { apply } = useThemeCss()
 
   onMounted(async () => {
     const s = await load()
-    // 上传主题:拉取 tokens.css 注入 <head> 尾部,同优先级下覆盖内置 element-plus
-    const name = s?.theme?.name
-    if (name && name !== 'element-plus') {
-      const css = await api.themeTokens(name)
-      if (css) {
-        let el = document.getElementById('runtime-theme') as HTMLStyleElement | null
-        if (!el) {
-          el = document.createElement('style')
-          el.id = 'runtime-theme'
-          document.head.append(el)
-        }
-        el.textContent = css
-      }
-    }
+    // 站点主题:只作用于文章页;后台主题在 admin 布局里单独注入
+    await apply('site', s?.theme_site || s?.theme?.name || '')
     if (injectPlugins) {
       const ps = (await api.plugins()) ?? []
       for (const p of ps) {

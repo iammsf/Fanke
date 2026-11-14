@@ -6,7 +6,7 @@ import (
 )
 
 // 公开配置白名单:前端渲染所需。
-var publicSettings = []string{"site", "theme", "plugins", "nav", "comment_policy"}
+var publicSettings = []string{"site", "theme", "theme_site", "theme_admin", "plugins", "nav", "comment_policy"}
 
 func (a *App) PublicSettings(w http.ResponseWriter, r *http.Request) {
 	out, err := cachedPublicJSON(r.Context(), &a.publicCache, cachePublicSettings, func() (map[string]json.RawMessage, error) {

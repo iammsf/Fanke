@@ -43,6 +43,7 @@ type updateEntry struct {
 type updateManifest struct {
 	Core    updateEntry            `json:"core"`
 	Plugins map[string]updateEntry `json:"plugins"`
+	Themes  map[string]updateEntry `json:"themes"`
 }
 
 // manifestURL 返回生效的清单地址(配置优先于默认值)。

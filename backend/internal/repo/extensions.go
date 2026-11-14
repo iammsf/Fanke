@@ -102,6 +102,17 @@ func (db *DB) SetExtensionEnabled(ctx context.Context, id int64, enabled bool) e
 	return err
 }
 
+// UpdateExtensionMeta 更新插件元信息(在线更新时使用),保留启用/初始化状态与数据表。
+func (db *DB) UpdateExtensionMeta(ctx context.Context, id int64, e Extension) error {
+	hooks, _ := json.Marshal(e.Hooks)
+	_, err := db.Exec(ctx, `UPDATE extensions_data SET
+		name=$2, author=$3, version=$4, date=$5, description=$6,
+		url=$7, update_url=$8, favico=$9, hooks=$10, updated_at=now()
+		WHERE id=$1`, id, e.Name, e.Author, e.Version, e.Date, e.Description,
+		e.URL, e.UpdateURL, e.Favico, hooks)
+	return err
+}
+
 func (db *DB) SetExtensionInitialized(ctx context.Context, id int64) error {
 	_, err := db.Exec(ctx, `UPDATE extensions_data SET initialized=TRUE, updated_at=now() WHERE id=$1`, id)
 	return err

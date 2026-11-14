@@ -71,6 +71,8 @@ func (a *App) Router() http.Handler {
 			r.Get("/settings", a.PublicSettings)
 			r.Get("/themes", a.ListThemes)
 			r.Get("/themes/{name}/tokens.css", a.GetThemeCSS)
+			r.Get("/themes/{name}/site.css", a.GetThemeSiteCSS)
+			r.Get("/themes/{name}/admin.css", a.GetThemeAdminCSS)
 			r.Get("/plugins", a.ListPluginsPublic)
 
 			// 插件(扩展):公开页面/资源/启用列表/公开 hook
@@ -130,6 +132,8 @@ func (a *App) Router() http.Handler {
 				r.Post("/admin/media/s3/cache-control", a.CacheControlBackfill)
 				r.Post("/admin/themes", a.UploadTheme)
 				r.Delete("/admin/themes/{name}", a.DeleteTheme)
+				r.Post("/admin/themes/{slug}/check-update", a.CheckThemeUpdate)
+				r.Post("/admin/themes/{slug}/update", a.ApplyThemeUpdate)
 				r.Get("/admin/plugins", a.ListPluginsAdmin)
 				r.Post("/admin/plugins", a.CreatePlugin)
 				r.Put("/admin/plugins/{id}", a.UpdatePlugin)
@@ -141,6 +145,7 @@ func (a *App) Router() http.Handler {
 				r.Post("/admin/extensions/{slug}/enabled", a.SetExtensionEnabled)
 				r.Post("/admin/extensions/{slug}/initialized", a.MarkExtensionInitialized)
 				r.Post("/admin/extensions/{slug}/check-update", a.CheckExtensionUpdate)
+				r.Post("/admin/extensions/{slug}/update", a.ApplyExtensionUpdate)
 				r.Delete("/admin/extensions/{slug}", a.DeleteExtension)
 				r.Post("/admin/extensions/{slug}/hook/{hook}", a.InvokeExtensionHookAdmin)
 				// AI 连接管理

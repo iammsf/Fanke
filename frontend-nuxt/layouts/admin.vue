@@ -11,10 +11,9 @@ import {
   Setting,
 } from '@element-plus/icons-vue'
 
-useSiteBoot(false)
-
 const { logout } = useAuth()
-const { site } = useSettings()
+const { site, load: loadSettings } = useSettings()
+const { apply: applyTheme } = useThemeCss()
 const { me, load: loadMe } = useAdminMe()
 const route = useRoute()
 
@@ -44,9 +43,11 @@ const visibleLinks = computed(() => {
   return links.filter((l) => authorAllowed.has(l.id))
 })
 onMounted(async () => {
-  // 并行拉取:账号信息 + 启用插件列表
+  // 并行拉取:站点设置 + 账号信息 + 启用插件列表
   const { ensurePublic } = useExtensions()
-  await Promise.all([loadMe(), ensurePublic()])
+  const [settings] = await Promise.all([loadSettings(), loadMe(), ensurePublic()])
+  // 后台主题与文章页主题分开,只注入 admin 主题
+  await applyTheme('admin', settings?.theme_admin || '')
 })
 </script>
 

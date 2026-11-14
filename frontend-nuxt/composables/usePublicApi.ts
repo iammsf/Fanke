@@ -74,8 +74,10 @@ export function usePublicApi() {
     settings: () => get<SiteSettings>('/settings'),
     comments: (slug: string) =>
       get<{ items: CommentItem[]; allow_comments: boolean }>(`/posts/${encodeURIComponent(slug)}/comments`),
-    themes: () => get<{ names: string[] }>('/themes'),
+    themes: () => get<{ names: string[]; items: ThemeInfo[] }>('/themes'),
     themeTokens: (name: string) => getText(`/themes/${encodeURIComponent(name)}/tokens.css`),
+    themeFile: (name: string, target: 'site' | 'admin') =>
+      getText(`/themes/${encodeURIComponent(name)}/${target}.css`),
     plugins: () => get<UserPlugin[]>('/plugins'),
     setupStatus: () => get<SetupStatus>('/setup/status'),
   }

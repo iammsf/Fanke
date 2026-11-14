@@ -151,6 +151,8 @@ sudo bash deploy/install.sh --update
 
 `extensions/`、`themes/`、`media/`、`state/` 和数据库都不会动。要求服务账号对 `bin/` 与前端目录有写权限；systemd unit 已通过 `ReadWritePaths` 放行，安装脚本也会把前端目录 chown 给服务账号。
 
+插件也支持在线更新：插件列表/详情页检查到新版本后会出现「更新」按钮，后端下载清单里的 zip、校验 `sha256`、替换插件目录，并保留插件数据表与启用状态。主题同理，在「设置 → 主题」里检查更新与更新。
+
 也可以继续用部署脚本升级：
 
 ```bash
@@ -226,6 +228,38 @@ git push origin v1.1.0
 安装方式：后台「插件」页上传 zip。部署脚本已把可安装的 zip 放在 `/opt/fanke/dist/extensions/`。
 
 插件开发文档：[doc/plugins.md](doc/plugins.md)；hook 权威参考：[doc/hooks.md](doc/hooks.md)。新增或修改 hook 时必须同步更新文档，并在插件的 `info.json` 中声明。
+
+---
+
+## 主题
+
+文章页与管理页的主题是分开的：文章页默认「材料设计」，管理页默认 Element Plus，可以在后台「设置 → 主题」分别选择或上传。
+
+主题包是一个 zip：
+
+```
+my-theme.zip
+├── info.json     # 元信息与适用范围
+├── site.css      # 文章页样式(可选)
+└── admin.css     # 管理页样式(可选)
+```
+
+```json
+{
+  "slug": "my-theme",
+  "name": "我的主题",
+  "version": "1.0.0",
+  "date": "2026-11-15",
+  "author": "電腦玩家Stan",
+  "description": "示例主题",
+  "targets": ["site", "admin"]
+}
+```
+
+- `targets` 取 `site` / `admin` / 两者;声明了哪个区域就必须提供对应 CSS
+- 兼容旧主题:只有 `tokens.css` 时按「文章页 + 管理页」双端主题处理
+- 主题 CSS 在运行时注入各自区域,文章页与后台互不覆盖
+- 主题也可以在线检查更新与更新（清单 `themes` 段）
 
 ---
 

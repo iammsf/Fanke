@@ -1,8 +1,9 @@
 <script setup lang="ts">
 // 站点设置各分区独立保存，插件配置通过贡献入口进入详情页。
-// 主题管理:占位(后续独立功能,不在本期开发)。
+// 主题管理:文章页 / 管理页分别选择,主题包 info.json 声明 targets。
 definePageMeta({ layout: 'admin', middleware: 'auth' })
-import type { MediaItem, NavItem, SiteSettings } from '~/types'
+import type { MediaItem, NavItem, SiteSettings, ThemeInfo, ThemeUpdateInfo } from '~/types'
+import { ElMessageBox } from 'element-plus'
 
 const { api } = useAuth()
 const { contributions, contributionsLoaded, refreshContributions } = useExtensions()
@@ -33,6 +34,122 @@ const coverPickerOpen = computed({
 // ---- nav ----
 const nav = ref<NavItem[]>([])
 const busy = ref<Record<string, boolean>>({})
+
+// ---- theme ----
+const themes = ref<ThemeInfo[]>([])
+const themeSite = ref('material')
+const themeAdmin = ref('element-plus')
+const themeBusy = ref(false)
+const themeInput = ref<HTMLInputElement>()
+const themeUpdates = ref<Record<string, ThemeUpdateInfo>>({})
+
+const siteThemes = computed(() => themes.value.filter((t) => t.targets?.includes('site')))
+const adminThemes = computed(() => themes.value.filter((t) => t.targets?.includes('admin')))
+
+const loadThemes = async () => {
+  try {
+    const res = await api<{ items: ThemeInfo[] }>('/themes')
+    themes.value = Array.isArray(res?.items) ? res.items : []
+  } catch {
+    themes.value = []
+  }
+}
+
+const saveThemes = async () => {
+  themeBusy.value = true
+  try {
+    await api('/admin/settings?key=theme_site', { method: 'PUT', body: JSON.stringify(themeSite.value) })
+    await api('/admin/settings?key=theme_admin', { method: 'PUT', body: JSON.stringify(themeAdmin.value) })
+    push('主题已保存,正在刷新…', true)
+    setTimeout(() => location.reload(), 400)
+  } catch (e: any) {
+    push(e.message || '保存主题失败', false)
+    themeBusy.value = false
+  }
+}
+
+const pickThemeFile = () => themeInput.value?.click()
+
+const uploadTheme = async (ev: Event) => {
+  const input = ev.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  themeBusy.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', file)
+    await api('/admin/themes', { method: 'POST', body: fd })
+    push('主题已上传', true)
+    await loadThemes()
+  } catch (e: any) {
+    push(e.message || '上传失败', false)
+  } finally {
+    themeBusy.value = false
+  }
+}
+
+const removeTheme = async (t: ThemeInfo) => {
+  try {
+    await ElMessageBox.confirm(`删除主题「${t.name}」?`, '删除确认', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  themeBusy.value = true
+  try {
+    await api(`/admin/themes/${encodeURIComponent(t.slug)}`, { method: 'DELETE' })
+    push('已删除', true)
+    if (themeSite.value === t.slug) themeSite.value = 'material'
+    if (themeAdmin.value === t.slug) themeAdmin.value = 'element-plus'
+    await loadThemes()
+  } catch (e: any) {
+    push(e.message || '删除失败', false)
+  } finally {
+    themeBusy.value = false
+  }
+}
+
+const checkTheme = async (t: ThemeInfo) => {
+  themeBusy.value = true
+  try {
+    const r = await api<ThemeUpdateInfo>(`/admin/themes/${encodeURIComponent(t.slug)}/check-update`, { method: 'POST' })
+    themeUpdates.value[t.slug] = r
+    push(r.has_update ? `有新版本 ${r.version}` : '已是最新', !r.has_update)
+  } catch (e: any) {
+    push(e.message || '检查更新失败', false)
+  } finally {
+    themeBusy.value = false
+  }
+}
+
+const applyThemeUpdate = async (t: ThemeInfo) => {
+  const r = themeUpdates.value[t.slug]
+  if (!r?.has_update) return
+  try {
+    await ElMessageBox.confirm(`把主题「${t.name}」更新到 ${r.version}?`, '更新主题', {
+      type: 'warning',
+      confirmButtonText: '更新',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  themeBusy.value = true
+  try {
+    await api(`/admin/themes/${encodeURIComponent(t.slug)}/update`, { method: 'POST' })
+    push('主题已更新,刷新页面生效', true)
+    await loadThemes()
+    delete themeUpdates.value[t.slug]
+  } catch (e: any) {
+    push(e.message || '更新失败', false)
+  } finally {
+    themeBusy.value = false
+  }
+}
 
 const put = async (key: string, value: unknown, label: string) => {
   busy.value[key] = true
@@ -75,6 +192,12 @@ const load = async () => {
     defaultCovers.moment = dc.moment || ''
   }
   nav.value = Array.isArray(s.nav) && s.nav.length ? [...s.nav] : [{ label: '首页', href: '/' }]
+
+  const ts = (s as any).theme_site
+  themeSite.value = typeof ts === 'string' && ts.trim() ? ts.trim() : 'material'
+  const ta = (s as any).theme_admin
+  themeAdmin.value = typeof ta === 'string' && ta.trim() ? ta.trim() : 'element-plus'
+  await loadThemes()
 
   loading.value = false
 }
@@ -147,10 +270,72 @@ useHead({ title: '设置 · fanke 后台' })
         </div>
       </div>
 
-      <!-- 主题(占位) -->
+      <!-- 主题 -->
       <div class="panel card">
         <h2>主题(theme)</h2>
-        <p class="muted">主题上传/切换功能开发中,当前使用内置 Element Plus 主题。占位,敬请期待。</p>
+        <p class="muted" style="margin-top: 0">
+          文章页与管理页可以分别使用不同主题。主题包内的 info.json 用
+          <code>targets</code> 声明适用区域(site / admin / both)。
+        </p>
+        <div class="ed-cols2">
+          <el-form-item label="文章页主题">
+            <el-select v-model="themeSite" style="width: 100%">
+              <el-option value="material" label="内置 · 材料设计" />
+              <el-option
+                v-for="t in siteThemes"
+                :key="t.slug"
+                :value="t.slug"
+                :label="`${t.name}${t.version ? ' v' + t.version : ''}`"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="管理页主题">
+            <el-select v-model="themeAdmin" style="width: 100%">
+              <el-option value="element-plus" label="内置 · Element Plus" />
+              <el-option
+                v-for="t in adminThemes"
+                :key="t.slug"
+                :value="t.slug"
+                :label="`${t.name}${t.version ? ' v' + t.version : ''}`"
+              />
+            </el-select>
+          </el-form-item>
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px">
+          <el-button type="primary" :loading="themeBusy" @click="saveThemes">保存主题</el-button>
+          <el-button :disabled="themeBusy" @click="pickThemeFile">上传主题包(.zip / .css)</el-button>
+          <input ref="themeInput" type="file" accept=".zip,.css" style="display: none" @change="uploadTheme" />
+        </div>
+
+        <div v-if="themes.length" class="theme-list">
+          <div v-for="t in themes" :key="t.slug" class="theme-row">
+            <div style="min-width: 0">
+              <div>
+                <b>{{ t.name }}</b>
+                <span class="muted"> v{{ t.version || '-' }}</span>
+                <span class="muted">
+                  · {{ t.targets?.includes('site') ? '文章页' : '' }}{{
+                    t.targets?.includes('site') && t.targets?.includes('admin') ? ' / ' : ''
+                  }}{{ t.targets?.includes('admin') ? '管理页' : '' }}
+                </span>
+              </div>
+              <div v-if="themeUpdates[t.slug]" class="muted" style="font-size: 12px; margin-top: 2px">
+                <template v-if="themeUpdates[t.slug].has_update">
+                  可更新到 {{ themeUpdates[t.slug].version }}
+                  <el-button link type="primary" size="small" :disabled="themeBusy" @click="applyThemeUpdate(t)">
+                    更新
+                  </el-button>
+                </template>
+                <template v-else>已是最新</template>
+              </div>
+            </div>
+            <div style="display: flex; gap: 6px; flex-shrink: 0">
+              <el-button size="small" :disabled="themeBusy" @click="checkTheme(t)">检查更新</el-button>
+              <el-button size="small" type="danger" :disabled="themeBusy" @click="removeTheme(t)">删除</el-button>
+            </div>
+          </div>
+        </div>
+        <p v-else class="muted" style="margin: 14px 0 0">还没有上传过主题。</p>
       </div>
 
       <!-- 评论策略 -->
@@ -287,4 +472,19 @@ useHead({ title: '设置 · fanke 后台' })
 </template>
 
 <style scoped>
+.theme-list {
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.theme-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.theme-row:last-child {
+  border-bottom: 0;
+}
 </style>

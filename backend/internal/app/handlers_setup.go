@@ -209,6 +209,8 @@ func (a *App) SetupComplete(w http.ResponseWriter, r *http.Request) {
 	defaults := map[string]any{
 		"site":           map[string]string{"title": req.Site.Title, "subtitle": req.Site.Subtitle, "author": name},
 		"theme":          map[string]string{"name": "element-plus"},
+		"theme_site":     "material",
+		"theme_admin":    "element-plus",
 		"plugins":        map[string]bool{"shiki": true, "heading-anchors": true, "lazy-images": true},
 		"comment_policy": map[string]string{"mode": "moderate"},
 		"nav":            []map[string]string{{"label": "首页", "href": "/"}, {"label": "分类", "href": "/categories"}, {"label": "标签", "href": "/tags"}, {"label": "搜索", "href": "/search"}},

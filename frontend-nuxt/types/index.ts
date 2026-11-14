@@ -62,11 +62,34 @@ export interface NavItem {
 export interface SiteSettings {
   site?: { title?: string; subtitle?: string; author?: string; footer?: string; copyright?: string; admin_name?: string }
   theme?: { name?: string }
+  theme_site?: string
+  theme_admin?: string
   plugins?: Record<string, boolean>
   nav?: NavItem[]
   comment_policy?: { mode?: string }
   media_image_upload?: { enabled: boolean }
   [k: string]: unknown
+}
+
+// 运行时主题包(info.json)
+export interface ThemeInfo {
+  slug: string
+  name: string
+  version: string
+  date: string
+  author: string
+  description: string
+  targets: string[]
+  update_url?: string
+}
+
+export interface ThemeUpdateInfo {
+  version: string
+  download_url: string
+  page_url?: string
+  notes?: string
+  date: string
+  has_update: boolean
 }
 
 export interface UserPlugin {

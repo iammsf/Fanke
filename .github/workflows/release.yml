@@ -74,7 +74,7 @@ jobs:
             rm -rf "$staging"
           done
 
-      - name: 构建插件安装包
+      - name: 构建插件与主题包
         run: |
           set -euo pipefail
           for dir in extensions/*/; do
@@ -88,6 +88,12 @@ jobs:
               done
             fi
             ( cd "$dir" && zip -qr "../../dist/$slug.zip" . )
+          done
+          for dir in themes/*/; do
+            [ -d "$dir" ] || continue
+            slug="$(basename "$dir")"
+            [ -f "$dir/info.json" ] || continue
+            ( cd "$dir" && zip -qr "../../dist/theme-$slug.zip" . )
           done
           ls -lh dist
 
@@ -137,11 +143,25 @@ jobs:
                   'notes': info.get('description', ''),
                   'page_url': page,
                   'download_url': f'{base}/{slug}.zip',
+                  'sha256': sha256_file(f'dist/{slug}.zip'),
+              }
+          themes = {}
+          for path in sorted(glob.glob('themes/*/info.json')):
+              with open(path, encoding='utf-8') as fh:
+                  info = json.load(fh)
+              slug = info.get('slug') or os.path.basename(os.path.dirname(path))
+              themes[slug] = {
+                  'version': info.get('version', ''),
+                  'date': info.get('date', ''),
+                  'notes': info.get('description', ''),
+                  'page_url': page,
+                  'download_url': f'{base}/theme-{slug}.zip',
+                  'sha256': sha256_file(f'dist/theme-{slug}.zip'),
               }
           with open('updates.json', 'w', encoding='utf-8') as fh:
-              json.dump({'core': core, 'plugins': plugins}, fh, ensure_ascii=False, indent=2)
+              json.dump({'core': core, 'plugins': plugins, 'themes': themes}, fh, ensure_ascii=False, indent=2)
               fh.write('\n')
-          print('已生成 updates.json:', core['version'], list(plugins))
+          print('已生成 updates.json:', core['version'], list(plugins), list(themes))
           PY
 
       - name: 提交更新清单到 main

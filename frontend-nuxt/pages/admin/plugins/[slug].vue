@@ -3,6 +3,7 @@
 // iframe 与父页通过 postMessage 桥通信:插件内 Fanke.callHook → 父页代发鉴权请求 → 结果回传。
 definePageMeta({ layout: 'admin', middleware: 'auth' })
 import type { Extension, ExtensionUpdateInfo } from '~/types'
+import { ElMessageBox } from 'element-plus'
 
 const route = useRoute()
 const slug = computed(() => String(route.params.slug))
@@ -272,6 +273,33 @@ const checkUpdate = async () => {
   }
 }
 
+const updateExt = async () => {
+  if (!ext.value || !update.value?.has_update) return
+  try {
+    await ElMessageBox.confirm(
+      `把「${ext.value.name}」更新到 ${update.value.version}？插件数据表会保留，已启用状态不变。`,
+      '更新插件',
+      { type: 'warning', confirmButtonText: '更新', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  busy.value = true
+  try {
+    await run('更新插件中…', () => api(`/admin/extensions/${slug.value}/update`, { method: 'POST' }))
+    push('插件已更新', true)
+    update.value = null
+    await load()
+    refreshPublic()
+    refreshContributions()
+    reloadIframe()
+  } catch (e: any) {
+    push(e.message || '更新失败', false)
+  } finally {
+    busy.value = false
+  }
+}
+
 const reloadIframe = () => iframeKey.value++
 
 // AppBadge → el-tag 类型映射
@@ -335,6 +363,9 @@ useHead(() => ({ title: `${ext.value?.name || '插件'} · fanke 后台` }))
           </div>
           <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px">
             <el-button v-if="ext.update_url" size="small" :disabled="busy" @click="checkUpdate">检查更新</el-button>
+            <el-button v-if="update?.has_update" size="small" type="primary" :disabled="busy" @click="updateExt">
+              更新到 {{ update.version }}
+            </el-button>
             <el-button size="small" :disabled="busy || (!ext.initialized && !ext.enabled)" @click="toggle">
               {{ ext.enabled ? '禁用' : '启用' }}
             </el-button>

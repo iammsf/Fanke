@@ -3,6 +3,7 @@
 // 样式先简单,后续再统一美化。
 definePageMeta({ layout: 'admin', middleware: 'auth' })
 import type { Extension, ExtensionUpdateInfo } from '~/types'
+import { ElMessageBox } from 'element-plus'
 
 const { api, getToken, tryRefresh, apiBase } = useAuth()
 const { push } = useToast()
@@ -171,6 +172,33 @@ const checkUpdate = async (e: Extension) => {
   }
 }
 
+const updateExt = async (e: Extension) => {
+  const u = updates.value[e.slug]
+  if (!u || u === 'error' || !u.has_update) return
+  try {
+    await ElMessageBox.confirm(
+      `把「${e.name}」更新到 ${u.version}？插件数据表会保留，已启用状态不变。`,
+      '更新插件',
+      { type: 'warning', confirmButtonText: '更新', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  busy.value[`u:${e.slug}`] = true
+  try {
+    await run('更新插件中…', () => api(`/admin/extensions/${e.slug}/update`, { method: 'POST' }))
+    push('插件已更新', true)
+    updates.value[e.slug] = 'error'
+    await load()
+    refreshPublic()
+    refreshContributions()
+  } catch (err: any) {
+    push(err.message || '更新失败', false)
+  } finally {
+    busy.value[`u:${e.slug}`] = false
+  }
+}
+
 // AppBadge → el-tag 类型映射
 const badgeType = (k: string) => (({ pub: 'success', draft: 'primary', spam: 'danger', wait: 'warning', st: 'info' }) as Record<string, string>)[k] || 'info'
 
@@ -240,6 +268,15 @@ useHead({ title: '插件 · fanke 后台' })
                 <el-button size="small" @click="navigateTo(`/admin/plugins/${e.slug}`)">详情</el-button>
                 <el-button v-if="e.update_url" size="small" :disabled="busy[`u:${e.slug}`]" @click="checkUpdate(e)">
                   检查更新
+                </el-button>
+                <el-button
+                  v-if="updates[e.slug] && updates[e.slug] !== 'error' && (updates[e.slug] as ExtensionUpdateInfo).has_update"
+                  size="small"
+                  type="primary"
+                  :disabled="busy[`u:${e.slug}`]"
+                  @click="updateExt(e)"
+                >
+                  更新
                 </el-button>
                 <el-button size="small" :disabled="busy[e.slug] || (!e.initialized && !e.enabled)" @click="toggle(e)">
                   {{ e.enabled ? '禁用' : '启用' }}
