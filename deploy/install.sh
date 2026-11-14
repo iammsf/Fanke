@@ -28,6 +28,7 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+ORIG_ARGS=("$@")
 
 APP_NAME="fanke"
 APP_DIR="/opt/fanke"
@@ -51,7 +52,7 @@ warn() { printf '\033[33m[警告]\033[0m %s\n' "$*"; }
 die()  { printf '\033[31m[错误]\033[0m %s\n' "$*" >&2; exit 1; }
 trap 'printf "\033[31m[错误]\033[0m 第 %s 行执行失败,请把上方输出发回反馈。\n" "$LINENO" >&2' ERR
 
-usage() { sed -n '2,30p' "${BASH_SOURCE[0]}" | sed -e 's/^# \{0,1\}//'; exit 0; }
+usage() { sed -n '2,26p' "${BASH_SOURCE[0]}" | sed -e 's/^# \{0,1\}//'; exit 0; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -89,13 +90,32 @@ if [ -n "$DB_PASS" ]; then
 fi
 if [ -n "$DOMAIN" ]; then
   DOMAIN="${DOMAIN#http://}"; DOMAIN="${DOMAIN#https://}"; DOMAIN="${DOMAIN%%/*}"
-  case "$DOMAIN" in *[!A-Za-z0-9.-]*) die "--domain 格式不正确";; esac
+  case "$DOMAIN" in
+    .*|*..*|*[!A-Za-z0-9.-]*) die "--domain 格式不正确" ;;
+  esac
+fi
+case "$APP_DIR" in
+  /*) ;;
+  *) die "--dir 必须是绝对路径" ;;
+esac
+case "$APP_DIR" in
+  *[[:space:]]*) die "--dir 不能包含空格" ;;
+  /|/bin|/boot|/dev|/etc|/home|/lib|/lib64|/opt|/proc|/root|/run|/sbin|/srv|/sys|/tmp|/usr|/var)
+    die "--dir 不能是系统目录,请用 /opt/fanke 这类独立目录" ;;
+esac
+if [ -n "$ADMIN_USER" ] || [ -n "$ADMIN_EMAIL" ] || [ -n "$ADMIN_PASS" ]; then
+  if [ -z "$ADMIN_USER" ] || [ -z "$ADMIN_EMAIL" ] || [ -z "$ADMIN_PASS" ]; then
+    die "--admin-user / --admin-email / --admin-pass 必须同时提供"
+  fi
+  if [ "${#ADMIN_PASS}" -lt 10 ]; then
+    die "管理员密码至少 10 位"
+  fi
 fi
 
 if [ "$(id -u)" -ne 0 ]; then
   command -v sudo >/dev/null 2>&1 || die "请用 root 运行:bash deploy/install.sh"
   log "需要 root 权限,正在通过 sudo 重新执行..."
-  exec sudo -E bash "$0" "$@"
+  exec sudo -E bash "$0" "${ORIG_ARGS[@]}"
 fi
 
 CONFIG_FILE="$APP_DIR/state/fanke.env"
@@ -349,6 +369,7 @@ case "$PANEL" in
     ;;
 esac
 install -d -m 0755 "$WEB_ROOT"
+[ "$WEB_ROOT" != "/" ] || die "站点目录异常,已中止"
 find "$WEB_ROOT" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 cp -a "$REPO_ROOT/frontend-nuxt/.output/public/." "$WEB_ROOT/"
 chown -R "$APP_NAME:$APP_NAME" "$APP_DIR"
@@ -394,6 +415,7 @@ EOF
   fi
   chown "$APP_NAME:$APP_NAME" "$CONFIG_FILE"
   chmod 0600 "$CONFIG_FILE"
+  umask 022
   log "已生成配置 $CONFIG_FILE"
 }
 write_env
