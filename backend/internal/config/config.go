@@ -53,6 +53,8 @@ type Config struct {
 	AppDir string
 	// WebRoot 前端静态目录(默认按 THEMES_DIR 推断站点 index,再退回 AppDir/web)。
 	WebRoot string
+	// UpdateProxy 下载升级包用的代理(如 http://127.0.0.1:10808);留空则直连。
+	UpdateProxy string
 
 	InsecureCookie bool
 
@@ -93,6 +95,7 @@ func Load() *Config {
 		UpdateManifestURL:      get("UPDATE_MANIFEST_URL", ""),
 		AppDir:                 get("APP_DIR", ""),
 		WebRoot:                get("WEB_ROOT", ""),
+		UpdateProxy:            get("UPDATE_PROXY", ""),
 		InsecureCookie:         get("INSECURE_COOKIE", "false") == "true",
 		BootstrapAdminEmail:    get("BOOTSTRAP_ADMIN_EMAIL", ""),
 		BootstrapAdminUsername: get("BOOTSTRAP_ADMIN_USERNAME", "admin"),

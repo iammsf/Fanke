@@ -6,7 +6,7 @@
   "date": "2026.10.29",
   "description": "文章编辑器内的 SEO 检查与 AI 建议面板：本地规则可配置，AI 建议需手动确认后写入标题/摘要。",
   "url": "https://boke.masi.fan",
-  "update_url": "https://cdn.jsdelivr.net/gh/iammsf/fanke@main/updates.json",
+  "update_url": "https://raw.githubusercontent.com/iammsf/fanke/main/updates.json",
   "favico": "favico.svg",
   "request": ["store.ensure_table", "store.get", "store.save", "ai.chat", "notify.send", "addEditorPanel"]
 }

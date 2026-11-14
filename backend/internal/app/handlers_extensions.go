@@ -488,8 +488,29 @@ func (a *App) CheckExtensionUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
+	// 配置了自定义更新渠道时,统一走全局清单(plugins.<slug>);否则用插件自己的 update_url。
+	var data []byte
+	if strings.TrimSpace(a.Cfg.UpdateManifestURL) != "" {
+		m, err := a.fetchManifest(ctx)
+		if err != nil {
+			a.fail(w, http.StatusBadGateway, "检查更新失败: "+err.Error())
+			return
+		}
+		entry, ok := m.Plugins[e.Slug]
+		if !ok {
+			a.fail(w, http.StatusNotFound, "更新清单中没有该插件")
+			return
+		}
+		remote := repo.ExtUpdate{
+			Version: entry.Version, DownloadURL: entry.DownloadURL, PageURL: entry.PageURL,
+			Notes: entry.Notes, Date: entry.Date,
+		}
+		remote.HasUpdate = entry.Version != "" && entry.Version != e.Version
+		writeJSON(w, http.StatusOK, remote)
+		return
+	}
 	// 用探测客户端:update_url 来自插件元数据,必须拦内网/回环并校验重定向目标(防 SSRF)。
-	data, err := fetchUpdateJSON(ctx, e.UpdateURL)
+	data, err = fetchUpdateJSON(ctx, e.UpdateURL)
 	if err != nil {
 		a.fail(w, http.StatusBadGateway, "检查更新失败: "+err.Error())
 		return

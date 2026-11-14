@@ -148,9 +148,13 @@ func (a *App) applyCoreUpdate(ctx context.Context, m *updateManifest) (map[strin
 }
 
 // downloadToFile 下载到文件并返回实际字节的 sha256(hex)。
+// 优先用 curl:国内服务器直连 github.com 常超时,但系统 curl 可走本地代理。
 func downloadToFile(ctx context.Context, url, dest string) (string, error) {
 	if err := validProbeURL(url); err != nil {
 		return "", err
+	}
+	if err := curlToFile(ctx, url, dest, updateArchiveMax); err == nil {
+		return fileSHA256(dest)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -180,6 +184,20 @@ func downloadToFile(ctx context.Context, url, dest string) (string, error) {
 	}
 	if n > updateArchiveMax {
 		return "", errors.New("升级包超过 300MB 上限")
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// fileSHA256 计算文件哈希。
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }

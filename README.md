@@ -136,9 +136,11 @@ sudo bash deploy/install.sh --update
 
 - 后台仪表盘显示当前版本，管理员可点「检查更新」查询博客本体最新版本；有更新时出现「立即升级」
 - 插件列表 / 插件详情页有各自的「检查更新」，显示远端版本、更新说明与发布页链接
-- 检查逻辑读取仓库根目录的 [updates.json](updates.json)，默认通过 jsDelivr 镜像访问：
-  `https://cdn.jsdelivr.net/gh/iammsf/fanke@main/updates.json`
-  （原始地址 `https://raw.githubusercontent.com/iammsf/fanke/main/updates.json` 在部分网络会超时；两者内容一致，可用 `UPDATE_MANIFEST_URL` 覆盖）
+- 检查逻辑读取仓库根目录的 [updates.json](updates.json)，默认走 GitHub raw：
+  `https://raw.githubusercontent.com/iammsf/fanke/main/updates.json`
+- 升级渠道可自定义，设置 `UPDATE_MANIFEST_URL` 即可切换，例如 jsDelivr
+  `https://cdn.jsdelivr.net/gh/iammsf/fanke@main/updates.json`，或自建镜像（内容格式一致）
+- 服务器直连 GitHub 超时（下载失败）时，设置 `UPDATE_PROXY` 走系统代理；后端优先用系统 `curl` 下载，兼容系统已有的代理配置
 
 ### 在线升级本体
 
@@ -191,7 +193,8 @@ git push origin v1.1.0
 | `THUMB_DIR` | 系统临时目录 | 缩略图缓存目录 |
 | `THUMB_ALLOW_HOSTS` | 空 | 允许服务端代抓缩图的外部主机（逗号分隔，防 SSRF） |
 | `REDIS_URL` | 空 | 可选，多实例共享限流计数 |
-| `UPDATE_MANIFEST_URL` | jsDelivr 上的 `updates.json` | 更新清单地址；可换成 GitHub raw 或自建镜像 |
+| `UPDATE_MANIFEST_URL` | GitHub raw 上的 `updates.json` | 更新清单地址；可换成 jsDelivr 或自建镜像 |
+| `UPDATE_PROXY` | 空 | 抓清单/下载升级包用的 HTTP 代理，如 `http://127.0.0.1:10808` |
 | `APP_DIR` | 自动推断 | 在线升级的安装目录（可执行文件所在 `bin/` 的上级） |
 | `WEB_ROOT` | 自动推断 | 在线升级的前端静态目录（默认取 `THEMES_DIR` 所在站点的 `index`） |
 | `INSECURE_COOKIE` | `false` | 纯 HTTP 部署需设为 `true`，否则浏览器不保存登录 Cookie |

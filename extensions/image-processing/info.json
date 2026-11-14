@@ -11,7 +11,7 @@
    "date": "2026.10.27",
   "description": "上传时保留原图，为支持的静态图片生成等比且不放大的 WebP 派生图；在插件详情页配置处理开关、宽度列表与质量，设置页提供配置入口。",
   "url": "https://boke.masi.fan",
-  "update_url": "https://cdn.jsdelivr.net/gh/iammsf/fanke@main/updates.json",
+  "update_url": "https://raw.githubusercontent.com/iammsf/fanke/main/updates.json",
   "favico": "favico.svg",
   "request": ["beforeMediaUpload", "addSettingsItems"]
 }

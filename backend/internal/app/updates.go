@@ -7,16 +7,25 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 
 	"fanke/backend/internal/buildinfo"
 )
 
-// DefaultUpdateManifestURL 更新清单默认地址。
-// 用 jsDelivr 镜像读取仓库根目录的 updates.json:大陆网络通常可直连,
-// 原始地址(GitHub raw)可能超时;两者内容一致,可用 UPDATE_MANIFEST_URL 覆盖。
-const DefaultUpdateManifestURL = "https://cdn.jsdelivr.net/gh/iammsf/fanke@main/updates.json"
+// updateProxyURL 可选的更新代理(设置 UPDATE_PROXY);空则直连。
+var updateProxyURL string
+
+// ConfigureUpdateProxy 由 app.New 在启动时调用。
+func ConfigureUpdateProxy(proxy string) {
+	updateProxyURL = strings.TrimSpace(proxy)
+}
+
+// DefaultUpdateManifestURL 更新清单默认地址(GitHub raw,无需代理即可访问)。
+// 如需 jsDelivr 镜像,设置 UPDATE_MANIFEST_URL 覆盖即可。
+const DefaultUpdateManifestURL = "https://raw.githubusercontent.com/iammsf/fanke/main/updates.json"
 
 const manifestMaxBytes = 1 << 20 // 清单上限 1MB
 
@@ -54,10 +63,50 @@ func (a *App) manifestURL() string {
 	return DefaultUpdateManifestURL
 }
 
-// fetchUpdateJSON 用探测客户端抓取公开 JSON:不走环境代理、拦截内网目标、限制体积。
+// curlToFile 用系统 curl 抓取(支持 --proxy、重定向、超时与体积上限)。
+// 国内服务器直连 github.com 常超时,curl 可复用系统代理;失败时调用方再回落 Go。
+func curlToFile(ctx context.Context, url, dest string, max int64) error {
+	curl, err := exec.LookPath("curl")
+	if err != nil {
+		return err
+	}
+	args := []string{
+		"-fsSL", "--retry", "2", "--connect-timeout", "20", "--max-time", "900",
+		"--max-filesize", strconv.FormatInt(max+1, 10), "-o", dest,
+	}
+	if updateProxyURL != "" {
+		args = append(args, "--proxy", updateProxyURL)
+	}
+	args = append(args, url)
+	out, err := exec.CommandContext(ctx, curl, args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("curl: %v %s", err, strings.TrimSpace(string(out)))
+	}
+	st, err := os.Stat(dest)
+	if err != nil {
+		return err
+	}
+	if st.Size() > max {
+		return errors.New("响应超过大小上限")
+	}
+	return nil
+}
+
+// fetchUpdateJSON 优先用 curl(可走代理),失败再回落到 Go 探测客户端。
 func fetchUpdateJSON(ctx context.Context, url string) ([]byte, error) {
 	if err := validProbeURL(url); err != nil {
 		return nil, err
+	}
+	tmp, err := os.CreateTemp("", "fanke-manifest-*")
+	if err == nil {
+		name := tmp.Name()
+		_ = tmp.Close()
+		defer os.Remove(name)
+		if err := curlToFile(ctx, url, name, manifestMaxBytes); err == nil {
+			if data, err := os.ReadFile(name); err == nil && len(data) <= manifestMaxBytes {
+				return data, nil
+			}
+		}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

@@ -77,6 +77,7 @@ func New(cfg *config.Config, db *repo.DB) (*App, error) {
 		Thumbs: thumbs,
 		AI:     ai.NewClient(db),
 	}
+	ConfigureUpdateProxy(cfg.UpdateProxy)
 	// Signer 必须始终可用:否则配置了 DATABASE_URL 却漏配 JWT_SECRET 时,
 	// 登录/鉴权接口会因 nil 指针 panic。缺密钥时生成进程内临时密钥并告警。
 	if cfg.JWTSecret == "" {
