@@ -65,6 +65,8 @@ interface Window {
     const sty = parseSty(attrOf(attrs, 'des_sty'))
     const vertTop = desPos.indexOf('top') >= 0
     const align = desPos.indexOf('left') >= 0 ? 'left' : desPos.indexOf('right') >= 0 ? 'right' : 'center'
+    // 历史标签可能把图注写在 des 属性里，这里统一收敛成 figcaption 文本。
+    const text = (caption || '').trim() || attrOf(attrs, 'des') || attrOf(attrs, 'alt')
     const capStyle = [
       `font-size:${sty.fs ? sty.fs + 'px' : '13.5px'}`,
       `color:${sty.c || '#909399'}`,
@@ -75,26 +77,31 @@ interface Window {
       sty.italic ? 'font-style:italic' : '',
       sty.bg ? 'background:' + sty.bg : '',
       sty.bd ? 'border:1px solid ' + sty.bd : '',
+      sty.hidden ? 'display:none' : '',
     ]
       .filter(Boolean)
       .join(';')
     const figStyle = `margin:18px 0;max-width:100%${sty.w ? ';width:' + sty.w + '%' : ''}`
     const img = src
-      ? `<img src="${esc(src)}" alt="${esc(caption)}" style="display:block;width:100%;border-radius:${sty.r || 8}px">`
+      ? `<img src="${esc(src)}" alt="${esc(text)}" style="display:block;width:100%;border-radius:${sty.r || 8}px">`
       : '<span class="fanke-ph" style="display:block;padding:40px 0;border:1px dashed #c0c4cc;border-radius:8px;color:#909399;text-align:center">点击设置图片</span>'
-    const cap =
-      sty.hidden || !caption
-        ? ''
-        : `<figcaption style="${capStyle}">${esc(caption)}</figcaption>`
+    const cap = `<figcaption style="${capStyle}">${esc(text)}</figcaption>`
     const body = vertTop ? cap + img : img + cap
     const dp = attrOf(attrs, 'des_pos')
     const ds = attrOf(attrs, 'des_sty')
     return (
-      `<figure data-fanke-node="fanke-img" des="${esc(caption)}"` +
+      `<figure data-fanke-node="fanke-img"` +
       (dp ? ` des_pos="${esc(dp)}"` : '') +
       (ds ? ` des_sty="${esc(ds)}"` : '') +
       ` style="${figStyle}">${body}</figure>`
     )
+  }
+
+  // 画布上的 figcaption 文本是图注的唯一权威来源；des 只作为历史内容的兜底。
+  function captionOf(el: HTMLElement): string {
+    const cap = el.querySelector('figcaption')
+    if (cap) return (cap.textContent || '').trim()
+    return (el.getAttribute('des') || '').trim()
   }
 
   host.registerNode({
@@ -105,14 +112,12 @@ interface Window {
     toEditor: (attrs, caption) => render(attrs, caption),
     fromEditor: (el) => {
       const img = el.querySelector('img')
-      const cap = el.querySelector('figcaption')
       const attrs: Record<string, string> = { src: img ? img.getAttribute('src') || '' : '' }
       const dp = el.getAttribute('des_pos')
       const ds = el.getAttribute('des_sty')
       if (dp) attrs.des_pos = dp
       if (ds) attrs.des_sty = ds
-      const caption = (el.getAttribute('des') || (cap ? cap.textContent : '') || '').trim()
-      return { attrs, caption }
+      return { attrs, caption: captionOf(el) }
     },
     panel: {
       sections: [
@@ -170,12 +175,11 @@ interface Window {
     },
     read: (el) => {
       const img = el.querySelector('img')
-      const cap = el.querySelector('figcaption')
       const desPos = (el.getAttribute('des_pos') || 'middle bottom').toLowerCase()
       const sty = parseSty(el.getAttribute('des_sty') || '')
       return {
         src: img ? img.getAttribute('src') || '' : '',
-        caption: (el.getAttribute('des') || (cap ? cap.textContent : '') || '').trim(),
+        caption: captionOf(el),
         vpos: desPos.indexOf('top') >= 0 ? 'top' : 'bottom',
         hpos: desPos.indexOf('left') >= 0 ? 'left' : desPos.indexOf('right') >= 0 ? 'right' : 'mid',
         hidden: !!sty.hidden,

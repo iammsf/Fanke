@@ -12,7 +12,6 @@
     "@element-plus/nuxt": "^1.1.5",
     "@tinymce/tinymce-vue": "^6.3.0",
     "element-plus": "^2.14.7",
-    "marked": "^18.1.1",
     "nuxt": "^3.19.1",
     "tinymce": "^8.10.0",
     "tinymce-i18n": "^26.10.26",

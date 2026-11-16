@@ -4,6 +4,30 @@
 
 ---
 
+## 2026.11.17
+
+### 插件
+
+- **image-viewer 1.6：修复可视化编辑器里直接改图注不入库**
+  - 画布上 `figcaption` 的文字现在是图注的唯一权威来源。此前 `editor.ts` 的 `fromEditor` / `read` 优先读画布 `figure` 上的 `des` **属性**，而用户改的是 `figcaption` 的**文字**，保存时新文字被旧属性覆盖，写回数据库的仍是旧图注；取值顺序现已与文章页 `useImageViewer.ts` 对齐。
+  - `render()` 改为始终输出 `figcaption`（`des_sty` 含 `hidden` 时用 `display:none`），且不再往画布 `figure` 写 `des`：清空图注会真的存成空、隐藏图注不再丢失、空图注也能直接点进去输入。
+  - 顺带修复历史内容丢图注：图注写在 `des` 属性里的老文章，此前一进编辑器就被清空，保存后库里也没了。
+
+### 后端
+
+- **多桶上传写库失败**：`media.storage` / `media_variants.storage` 的 CHECK 只允许 `'s3'`/`'local'`，而多桶上传写的是 `'s3:<桶ID>'`。在未手改过约束的库上插入会失败，并连带回删刚上传的对象与派生图。新增 `0010_media_storage_bucket.sql` 放宽为 `local | s3 | s3:%`。
+- **删除 s3-storage 的保护失效**：`HasS3MediaReferences` 只匹配 `storage='s3'`，多桶记录全被漏掉，导致仍有媒体引用时也能把插件删掉。
+- **热接入数据库后 AI 接口一直 500**：`attachDB` 没有重建 `ai.Client`，它仍持有启动时的 nil DB；引导/找回模式下配置完数据库后，`ai.chat` 与后台 AI 接口会 nil 解引用 panic，直到重启进程才恢复。
+- `go test ./...` 不再因缺少 `extensions/s3-storage/server/bin/` 构建产物而整体失败：该用例改为跳过并打印构建命令。
+
+### 前端 / 文档
+
+- 删除未使用的 `marked` 依赖与 `usePublicApi.themeTokens`（旧主题的 `tokens.css` 由后端在 `site.css`/`admin.css` 接口内部回落，前端从未调用）。
+- README 更正编辑器与主题格式的描述：编辑器是 TinyMCE 可视化 + 右键改单块 HTML（Markdown 只是导入历史内容的后端回落），主题当前格式是 `site.css` / `admin.css`。
+- `doc/plugins.md` 补 Go 子进程插件的 `info.json` 字段（`protocol_version` / `trusted_process` / `entrypoint` / `capabilities` / `dependencies`）及其固定取值与构建命令；明确区分扩展包与历史遗留的内联 CSS/JS 片段系统（后者有接口无后台页面）；更新 image-viewer 的前端集成点描述。
+
+---
+
 ## 2026.11.14
 
 ### 插件

@@ -98,6 +98,8 @@ func (a *App) newSigner(secret string) *auth.Signer {
 // 调用方必须已持有 a.mu。
 func (a *App) attachDB(db *repo.DB, secret string) {
 	a.DB = db
+	// AI 客户端持有启动时的 db;引导模式下那是 nil,不重建会让 ai.chat 一直 panic 到重启。
+	a.AI = ai.NewClient(db)
 	a.Cfg.JWTSecret = secret
 	a.Signer = a.newSigner(secret)
 	a.s3Mu.Lock()

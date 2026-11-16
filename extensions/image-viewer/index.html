@@ -127,6 +127,13 @@
 </div>
 
 <div class="card">
+  <h2>1.6 更新记录 · 2026.11.17</h2>
+  <p class="muted">修复在可视化编辑器里直接改图注不入库：此前画布上的 des 属性被当成图注权威来源,用户在 figcaption 里改的文字保存时被旧值覆盖。现在一律以画布 figcaption 的实时文字为准,与文章页的取值顺序一致。</p>
+  <p class="muted">画布始终渲染 figcaption(隐藏图注用 display:none),因此清空图注会真的存成空,隐藏图注也不再丢失;figure 上不再写 des 属性。</p>
+  <p class="muted">修复历史内容丢图注：旧版渲染只认标签内文,把图注写在 des 属性里的老文章一进编辑器就被清空,现在会正确读出并回写为标签内文。</p>
+</div>
+
+<div class="card">
   <h2>1.5 更新记录 · 2026.11.02</h2>
   <p class="muted">插件标签改为独立的 &lt;fanke-img&gt;说明&lt;/fanke-img&gt;,不再占用原生 &lt;img&gt;,避免与普通图片互相干扰。</p>
   <p class="muted">编辑器插图默认写入 &lt;fanke-img&gt;;新增「替换正文中的普通 &lt;img&gt; 标签」开关,开启后普通图片也按插件样式渲染。</p>

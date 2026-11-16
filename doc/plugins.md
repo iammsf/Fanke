@@ -6,6 +6,9 @@
 >
 > 维护规则：新增/修改/删除任何 hook，必须同时更新 `hooks.md` 与本文档；插件使用 hook 必须在 `info.json` 的 `request` 中声明；插件需要新能力时，应在做插件的同时为后端实现 hook 并补文档。
 
+> **术语区分**：本文档的「插件」一律指 `extensions/` 下的扩展包（表 `extensions_data`，接口 `/api/v1/ext*` 与 `/api/v1/admin/extensions*`，后台页面 `/admin/plugins`）。
+> 仓库里还有一套**历史遗留的内联 CSS/JS 片段**系统：表 `plugins`（`0002_plugins.sql`，字段 name/css/js/enabled/sort），公开读接口 `GET /api/v1/plugins` 由 `useSiteBoot` 注入到文章页，管理接口 `GET/POST/PUT/DELETE /api/v1/admin/plugins` 仍然存在但**后台没有任何页面调用**，只能直接打接口维护。新需求一律走扩展包，不要再往这套片段系统里加东西。
+
 ---
 
 ## 一、插件包格式
@@ -47,6 +50,27 @@ my-plugin.zip
   "favico": "favico.svg",
   "request": ["store.ensure_table", "store.save", "store.get_batch", "media.list"]
 }
+```
+
+### info.json 中的 Go 子进程插件字段
+
+以下字段**只属于内置的两个 Go 子进程插件**（`s3-storage`、`image-processing`）。可承载子进程的插件集合在后端 `pluginrpc.ValidateManifest` 里是硬编码白名单，第三方插件无法通过声明这些字段获得子进程能力。
+
+| 字段 | 说明 |
+| --- | --- |
+| `protocol_version` | 必须等于后端 `pluginrpc.ProtocolVersion`（当前为 `1`） |
+| `trusted_process` | 必须为 `true`。子进程**没有沙箱**，继承 api 进程的系统调用与文件权限，因此只对内置插件开放 |
+| `entrypoint` | 必须精确等于 `server/bin/${goos}-${goarch}/<slug>-server`。`${goos}`/`${goarch}` 在运行时替换，Windows 下自动补 `.exe`。必须是插件目录内的真实可执行文件，不允许绝对路径与符号链接 |
+| `capabilities` | 必须与该 slug 的期望集合完全一致（顺序无关、不可重复、不可增减）。`s3-storage`：`storage.save/open/delete/list/head/setCacheControl/listBuckets/test`；`image-processing`：`image.process` |
+| `dependencies` | 宿主必须预装的外部命令，启用时用 `exec.LookPath` 校验。`image-processing` 必须为 `["cwebp"]`，`s3-storage` 必须为空 |
+
+非子进程插件**必须完全不写这五个字段**（或保持零值），否则安装/启用会因 `unsupported server plugin` 失败。
+
+`entrypoint` 指向的二进制是构建产物、不入库（`extensions/*/server/bin/` 已 gitignore）。干净检出后需要先构建，否则子进程能力不可用、相关测试会跳过：
+
+```bash
+cd extensions/s3-storage/server      && go build -o bin/$(go env GOOS)-$(go env GOARCH)/s3-storage-server .
+cd extensions/image-processing/server && go build -o bin/$(go env GOOS)-$(go env GOARCH)/image-processing-server .
 ```
 
 ### 安装行为
@@ -507,13 +531,14 @@ document.getElementById('scanBtn').addEventListener('click', function () {
 
 ### 1. 正文语法
 
-在 Markdown 正文中书写（替代默认 `![](url) 说明` 写法）:
+在正文 HTML 中书写（替代默认 `<img>` + 说明的写法）:
 
 ```html
 <fanke-img src="https://…/a.jpg" alt="A" des_pos="middle bottom" des_sty="fs=13,c=#666">图片描述</fanke-img>
 ```
 
-- 必须**顶格书写**(行首不要有空格/缩进,否则 Markdown 会当作代码块原样显示),并显式书写闭合 `</fanke-img>`。
+- 手写时必须**顶格书写**并显式书写闭合 `</fanke-img>`;若内容还要经过 Markdown 渲染(导入的历史正文),行首缩进会被当作代码块原样显示。
+- 在可视化编辑器里不必手写:插入后画布显示为 `<figure>` + `<figcaption>`,**图注以画布上 `figcaption` 的实时文字为准**保存回 `<fanke-img>` 标签内文;`des` 属性只作为历史内容的回落来源。
 - 插件标签固定为 `<fanke-img>`,与原生 `<img>` 完全分开;正文里的普通 `<img>` 不会因为带 `des` 属性而被误判为插件图片。
 - 说明文字写在标签对内;也可用 `des="…"` 属性指定(内文为空时回落到 `des`,再回落到 `alt`)。
 - 插件详情页的「替换正文中的普通 &lt;img&gt; 标签」开关开启后,原生 `<img>` 也会套用默认位置与样式;关闭时只处理 `<fanke-img>`。外链(`<a>` 内)的原生图片不会被替换。
@@ -559,18 +584,24 @@ document.getElementById('scanBtn').addEventListener('click', function () {
 - 规范化结果继续经过 `sanitize`，再由 `postUpdate` 保存到数据库，成功后才发送对应 `after*` 通知。
 - goldmark 保持 `html.WithUnsafe()`（原生 HTML 直出）+ bluemonday 消毒的组合不变。
 
-### 5.0 1.5 更新记录（2026.11.02）
+### 5.0 1.6 更新记录（2026.11.17）
+
+- **修复在可视化编辑器里直接改图注不入库**：`editor.ts` 的 `fromEditor` / `read` 此前把画布 `figure` 上的 `des` **属性**当成图注权威来源,而用户在画布里改的是 `figcaption` 的**文字**,于是保存时新文字被旧 `des` 覆盖,写回数据库的仍是旧图注。现在统一由 `captionOf()` 取值:画布 `figcaption` 的实时文字优先,`des` 只作为历史内容的回落,与文章页 `useImageViewer.ts` 的取值顺序一致。
+- `render()` 改为**始终**输出 `figcaption`(`des_sty` 含 `hidden` 时用 `display:none`),并且不再往画布 `figure` 上写 `des` 属性。因此清空图注会真的存成空、隐藏图注不再丢失、画布里也能直接点进空图注输入。
+- 修复历史内容丢图注：旧版 `render()` 只认标签内文,把图注写在 `des` 属性里的老文章一进编辑器就被清空并保存回库;现在会读出 `des`(再回落 `alt`)显示为 `figcaption`,保存时回写成标签内文。
+
+### 5.1 1.5 更新记录（2026.11.02）
 
 - 插件标签改为独立的 `<fanke-img>说明</fanke-img>`,不再占用原生 `<img>`,避免与普通图片互相干扰。
 - 编辑器插图默认写入 `<fanke-img>`;新增「替换正文中的普通 `<img>` 标签」开关,开启后普通图片也按插件样式渲染。
 - 存量文章一次性由 `<img>说明</img>` 迁移到 `<fanke-img>说明</fanke-img>`（备份表 `posts_html_bak_fanke_20261102`)。
 
-### 5.1 1.4 更新记录（2026.10.31）
+### 5.2 1.4 更新记录（2026.10.31）
 
 - 修复文章页默认配置读取：公开 hook `store.get_batch` 返回 `{"ok":true,"data":{"items":{…}}}`，前端此前按 `items` 平铺解析，导致默认 `des_sty` 一直为空、未自定义的图片没有任何默认样式。现已兼容 `data.items` 结构。
 - `des_sty` 改为默认配置与标签 token 合并：标签只覆盖自己写出的 token，未写的（如 `fs`、`b`）继续沿用插件默认值。
 
-### 5.2 1.3 更新记录（2026.10.31）
+### 5.3 1.3 更新记录（2026.10.31）
 
 - 默认说明位置/样式改为**渲染时套用插件配置**：在插件详情页改了默认值后，已发布文章里没写 `des_pos` / `des_sty` 的图片立即跟着变化，不用逐篇重新保存。
 - 后端保存时不再把 `des_pos="middle bottom"` 写死进正文，只补 `</img>` 闭合；标签显式写的属性仍然优先。
@@ -578,9 +609,10 @@ document.getElementById('scanBtn').addEventListener('click', function () {
 
 ### 6. 前端集成点（核心代码，非插件包内）
 
-- `composables/useImageViewer.ts`：配置拉取 + HTML 转换（`transform`)+ 编辑器源码回写（`setTagSrc`)。文章页 `pages/posts/[slug].vue` 对 `content_html` 应用 `transform`。
-- 编辑器 `components/admin/PostEditor.vue`：预览中对 `<fanke-img>` 渲染组件；无 src 时显示骨架，点击弹窗支持**上传图片（回调 URL 自动写入 src)/ 媒体库选择 / 外链**三种方式。
-- 样式类名前缀 `iv-`，定义在 `assets/css/global.css`。
+- `composables/useImageViewer.ts`：插件默认配置拉取 + **文章页** HTML 转换（`transform`)。文章页 `pages/posts/[slug].vue` 对 `content_html` 应用 `transform`；`setTagSrc` 供编辑器把选中的图片 URL 写回第 N 个 `<fanke-img>`。
+- 编辑器不再自己预览 `<fanke-img>`：`components/admin/RichTextEditor.vue`（TinyMCE 宿主）只负责**落库形态 ⇄ 画布形态**互转与选区/面板事件，具体怎么渲染、怎么读写属性全部由插件 `editor.ts` 注册的 `toEditor` / `fromEditor` / `read` / `apply` 决定（见下文「11. 编辑器能力注册」）。落库形态绝不回灌编辑器,否则会被解析成裸标签并丢属性。
+- `components/admin/PostEditor.vue`：全页共用一个媒体选择对话框,插入插件节点时由 `insert-node` 事件打开,选中后调用 `insertNode(tag, media)` 写入画布;保存走 `getContent()`(内部即 `fromEditorHtml`)。
+- 文章页样式类名前缀 `iv-`，定义在 `assets/css/global.css`；编辑器画布内的样式由 `editor.ts` 内联生成，两边互不共用。
 
 ### 7. 1.2 更新记录（2026.10.27）
 
