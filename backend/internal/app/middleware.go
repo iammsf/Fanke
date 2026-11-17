@@ -137,11 +137,11 @@ func (h *hookLimiter) allow(slug, hook string) bool {
 }
 
 func (a *App) allowLogin(r *http.Request) bool {
-	return a.Limits.Login.allow(ipHash(r))
+	return a.Limits.Login.allow(a.ipHash(r))
 }
 
 func (a *App) allowComment(r *http.Request) bool {
-	return a.Limits.Comment.allow(ipHash(r))
+	return a.Limits.Comment.allow(a.ipHash(r))
 }
 
 // noStore API 响应一律禁止缓存。站点若挂在 CloudFront 等 CDN 上,
@@ -187,6 +187,6 @@ func (a *App) accessLog(next http.Handler) http.Handler {
 		}
 		log.Printf("http %s %s %d %dB %s ip=%s",
 			r.Method, path, status, ww.BytesWritten(),
-			time.Since(start).Round(time.Millisecond), ipHash(r))
+			time.Since(start).Round(time.Millisecond), a.ipHash(r))
 	})
 }

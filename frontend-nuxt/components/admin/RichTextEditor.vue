@@ -17,6 +17,7 @@ const emit = defineEmits<{
 
 const { ensureContributions, uploadWithRetry } = useMediaUpload()
 const { nodes, ensureLoaded } = useEditorRegistry()
+const fb = useTagFallbacks()
 const editor = ref<any>(null)
 const ready = ref(false)
 const value = ref('')
@@ -51,6 +52,9 @@ const fragment = (html: string): DocumentFragment => {
 // ---------- 落库 HTML ⇄ 画布 HTML（完全交给插件自己的 toEditor/fromEditor） ----------
 function toEditorHtml(html: string): string {
   if (!html) return ''
+  // 插件不在线(禁用/卸载/文件损坏)时,它声明过的标签先包成回落信封;
+  // 已注册进编辑器的标签交给插件自己的 toEditor。
+  html = fb.wrap(html, (tag) => !!nodes.value[tag])
   const doc = new DOMParser().parseFromString(`<div id="root">${html}</div>`, 'text/html')
   const root = doc.getElementById('root')
   if (!root) return html
@@ -72,6 +76,15 @@ function fromEditorHtml(html: string): string {
   const doc = new DOMParser().parseFromString(`<div id="root">${html}</div>`, 'text/html')
   const root = doc.getElementById('root')
   if (!root) return html
+  // 拆回落信封:原样还原落库标签,插件停用期间的编辑不会把它写坏
+  root.querySelectorAll('[data-fanke-fallback]').forEach((el) => {
+    const orig = el.getAttribute('data-fanke-orig') || ''
+    if (!orig.trim()) {
+      el.remove()
+      return
+    }
+    el.replaceWith(...Array.from(fragment(orig).childNodes))
+  })
   root.querySelectorAll('[data-fanke-node]').forEach((el) => {
     const tag = el.getAttribute('data-fanke-node') || ''
     const reg = nodes.value[tag]
@@ -199,7 +212,7 @@ const applyInlineHtmlEdit = (silent = false) => {
   const html = (editEl.textContent || '').trim()
   applyingEdit = true
   try {
-    replaceEditBlock(ed, html)
+    replaceEditBlock(ed, toEditorHtml(html))
     inlineEditing.value = false
     editEl = null
     editOrig = ''
@@ -228,7 +241,7 @@ const cancelInlineHtmlEdit = () => {
   if (!ed || !editEl) return
   applyingEdit = true
   try {
-    replaceEditBlock(ed, editOrig)
+    replaceEditBlock(ed, toEditorHtml(editOrig))
   } catch {
     /* ignore */
   } finally {
@@ -250,7 +263,10 @@ const startInlineHtmlEdit = (ed: any) => {
   const el = ed.getDoc().createElement('pre')
   el.className = 'fanke-html-edit'
   el.setAttribute('contenteditable', 'true')
-  el.textContent = p.html
+  // 代码块里只露出落库形态的标签(<img> / <fanke-img>说明</fanke-img>),
+  // 画布的 figure 包装是内部表示,不外露给用户写;应用时再转回画布形态。
+  const src = fromEditorHtml(p.html)
+  el.textContent = src
   // 代码块插到被选中的整块前面,再把原块删掉
   parent.insertBefore(el, p.first)
   let n: Node | null = p.first
@@ -262,10 +278,32 @@ const startInlineHtmlEdit = (ed: any) => {
     n = next
   }
   editEl = el
-  editOrig = p.html
+  editOrig = src
   inlineEditing.value = true
   ed.selection.setCursorLocation(el, 0)
   el.focus?.()
+}
+
+// 「工具 → 源代码」:与内联编辑同一口径,只展示/接收落库形态的标签,
+// 不用 TinyMCE 自带 code 插件(它直接暴露画布 figure 包装)。
+const openSourceDialog = (ed: any) => {
+  ed.windowManager.open({
+    title: '源代码',
+    size: 'large',
+    body: { type: 'panel', items: [{ type: 'textarea', name: 'code', label: 'HTML' }] },
+    buttons: [
+      { type: 'cancel', text: '取消' },
+      { type: 'submit', text: '应用', primary: true },
+    ],
+    initialData: { code: fromEditorHtml(ed.getContent()) },
+    onSubmit: (api: any) => {
+      const code = String(api.getData().code || '')
+      api.close()
+      ed.setContent(toEditorHtml(code))
+      userEdited = true
+      syncValue(ed)
+    },
+  })
 }
 
 const init = {
@@ -280,12 +318,13 @@ const init = {
   toolbar_sticky: true,
   toolbar_sticky_offset: 0,
   menubar: 'edit view insert format table tools',
-  // 「查看」菜单里去掉源代码(只在 工具 → 源代码 保留一处)
+  // 源代码走自绘对话框(只露落库形态的标签),不挂 TinyMCE code 插件;「查看」里不放第二处。
   menu: {
     view: { title: '查看', items: 'visualaid' },
+    tools: { title: '工具', items: 'fankeSource wordcount' },
   },
   language: 'zh_CN',
-  plugins: 'autoresize code codesample lists link table wordcount',
+  plugins: 'autoresize codesample lists link table wordcount',
   toolbar:
     'undo redo | blocks | bold italic underline strikethrough | forecolor backcolor | alignleft aligncenter alignright | bullist numlist blockquote | link fankeInsert table | codesample | removeformat',
   branding: false,
@@ -318,6 +357,12 @@ const init = {
     'code { background: #f2f3f5; padding: 1px 5px; border-radius: 4px; font-size: .92em; }',
     'table { border-collapse: collapse; width: 100%; } td,th { border: 1px solid #dcdfe6; padding: 6px 8px; }',
     '[data-fanke-node]:hover { outline: 1px dashed #c0c4cc; outline-offset: 2px; }',
+    // 插件不在线时的回落信封:整块锁定(改它写不回落库标签),用暖色边框区别于正常插件节点
+    'div.fanke-fallback-box { padding: 4px 6px; margin: .9em 0; border: 1px dashed #e6a23c;',
+    '  border-radius: 8px; background: #fdf6ec; }',
+    'div.fanke-fallback-box figure { margin: 0; text-align: center; }',
+    'div.fanke-fallback-box img { max-width: 100%; height: auto; }',
+    'div.fanke-fallback-box figcaption { margin-top: 4px; font-size: 13px; color: #909399; }',
     '[data-mce-selected], figure[data-mce-selected], img[data-mce-selected] {',
     '  background: transparent !important; outline: none !important; box-shadow: none !important; }',
   ].join('\n'),
@@ -382,6 +427,11 @@ const init = {
       text: '编辑 HTML',
       icon: 'code',
       onAction: () => startInlineHtmlEdit(ed),
+    })
+    ed.ui.registry.addMenuItem('fankeSource', {
+      text: '源代码',
+      icon: 'sourcecode',
+      onAction: () => openSourceDialog(ed),
     })
     ed.ui.registry.addContextMenu('fankeHtmlEdit', {
       update: () => (pendingHtml ? ['fankeHtmlEdit'] : []),
@@ -513,6 +563,7 @@ onMounted(async () => {
   void ensureContributions()
   if (!import.meta.client) return
   await ensureLoaded() // 先拿到插件注册表，再决定初始 HTML 怎么转换
+  await fb.load() // 回落账本与在线列表同源(/ext),插件不在线的标签要包成信封
   value.value = toEditorHtml(props.modelValue || '')
   await import('tinymce/tinymce')
   await Promise.all([
@@ -520,7 +571,6 @@ onMounted(async () => {
     import('tinymce/themes/silver'),
     import('tinymce/models/dom'),
     import('tinymce/plugins/autoresize'),
-    import('tinymce/plugins/code'),
     import('tinymce/plugins/codesample'),
     import('tinymce/plugins/link'),
     import('tinymce/plugins/lists'),

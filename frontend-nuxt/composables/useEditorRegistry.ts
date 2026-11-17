@@ -63,12 +63,14 @@ export function useEditorRegistry() {
   const nodes = useState<Record<string, NodeRegistration>>('fanke_editor_nodes', () => ({}))
   const loading = useState<boolean>('fanke_editor_loading', () => false)
   const loadedOnce = useState<boolean>('fanke_editor_loaded', () => false)
+  const { ensurePublic, editors } = useExtensions()
 
   function sync() {
     nodes.value = Object.fromEntries(registry.entries())
   }
 
-  // 按启用插件列表注入 editor.js；不存在的直接跳过（404 视为该插件未提供编辑器能力）。
+  // 按声明了 editor.register 的在线插件注入 editor.js;拉不到的直接跳过
+  // (404 视为该插件未提供编辑器能力)。插件列表复用 /ext 的共享缓存,不重复请求。
   async function ensureLoaded() {
     installEditorHost()
     if (loading.value) return
@@ -79,27 +81,23 @@ export function useEditorRegistry() {
     loading.value = true
     try {
       const base = (useRuntimeConfig().public.apiBase || '/api/v1').replace(/\/+$/, '')
-      const res = await fetch(`${base}/ext`)
-      if (res.ok) {
-        const j = await res.json()
-        const slugs: string[] = Array.isArray(j?.editors) ? j.editors : []
-        await Promise.all(
-          slugs.map(
-            (slug) =>
-              new Promise<void>((resolve) => {
-                const s = document.createElement('script')
-                s.src = `${base}/ext/${encodeURIComponent(slug)}/page/editor.js`
-                s.async = false
-                s.onload = () => resolve()
-                s.onerror = () => {
-                  s.remove()
-                  resolve()
-                }
-                document.head.appendChild(s)
-              }),
-          ),
-        )
-      }
+      await ensurePublic()
+      await Promise.all(
+        editors.value.map(
+          (slug) =>
+            new Promise<void>((resolve) => {
+              const s = document.createElement('script')
+              s.src = `${base}/ext/${encodeURIComponent(slug)}/page/editor.js`
+              s.async = false
+              s.onload = () => resolve()
+              s.onerror = () => {
+                s.remove()
+                resolve()
+              }
+              document.head.appendChild(s)
+            }),
+        ),
+      )
     } catch {
       /* 插件加载失败不影响编辑器本体 */
     } finally {

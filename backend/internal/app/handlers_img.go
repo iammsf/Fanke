@@ -152,7 +152,7 @@ func (a *App) thumbSource(ctx context.Context, src string) (string, func(context
 	localPrefix := strings.TrimRight(a.Cfg.MediaBaseURL, "/") + "/"
 	// 1) 当前 S3 桶:走 S3 直读(不经公网,也不吃 CDN 流量)
 	if a.DB != nil {
-		if settings, err := a.DB.S3Settings(ctx); err == nil {
+		if settings, err := a.s3Settings(ctx); err == nil {
 			if cfg, key, ok := bucketForURL(settings.Buckets, src); ok {
 				if store, _, err := a.s3StoreConfig(ctx, cfg); err == nil && store != nil {
 					return "s3|" + cfg.ID + "|" + cfg.Endpoint + "|" + cfg.Bucket + "|" + key, func(ctx context.Context) (io.ReadCloser, error) { return store.Open(ctx, key) }, true

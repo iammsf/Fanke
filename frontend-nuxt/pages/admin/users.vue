@@ -74,6 +74,41 @@ const del = async (u: AdminUser) => {
   }
 }
 
+// ---------- 批量删除(范式同 MediaLibrary;自己那一行不可勾选,后端也会逐项兜底) ----------
+const tableRef = ref()
+const selected = ref<Set<number>>(new Set())
+const onSelChange = (rows: AdminUser[]) => {
+  selected.value = new Set(rows.map((r) => r.id))
+}
+const selectable = (row: AdminUser) => row.id !== me.value?.id
+const clearSel = () => {
+  tableRef.value?.clearSelection()
+  selected.value.clear()
+}
+
+const bulkDelete = async () => {
+  if (!selected.value.size) return
+  try {
+    await ElMessageBox.confirm(`删除选中的 ${selected.value.size} 个用户?`, '批量删除', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  try {
+    const ids = Array.from(selected.value)
+    const res = await run('批量删除中…', () => api('/admin/users/bulk', { method: 'POST', body: JSON.stringify({ action: 'delete', ids }) }))
+    push(`已删除 ${res.ok} 项`, true)
+    if (res.failed?.length) (res.failed as string[]).forEach((f) => push(f, false))
+    clearSel()
+    load()
+  } catch (e: any) {
+    push(e.message || '批量删除失败', false)
+  }
+}
+
 useHead({ title: '用户 · fanke 后台' })
 </script>
 
@@ -84,7 +119,14 @@ useHead({ title: '用户 · fanke 后台' })
     <template v-else>
       <div class="panel card">
         <h2>站点用户</h2>
-        <el-table :data="list" stripe>
+        <!-- 批量工具栏(全选本页用表头 selection 复选框;自己那一行不可勾选) -->
+        <div v-if="selected.size" class="media-batch">
+          <span class="muted">已选 {{ selected.size }} 项</span>
+          <el-button size="small" type="danger" @click="bulkDelete">删除</el-button>
+          <el-button size="small" text @click="clearSel">取消</el-button>
+        </div>
+        <el-table ref="tableRef" :data="list" stripe @selection-change="onSelChange">
+          <el-table-column type="selection" width="42" :selectable="selectable" />
           <el-table-column label="ID" min-width="140">
             <template #default="{ row }">{{ row.username }}{{ row.id === me?.id ? '(我)' : '' }}</template>
           </el-table-column>

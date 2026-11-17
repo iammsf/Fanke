@@ -88,6 +88,7 @@ func (a *App) SyncScan(w http.ResponseWriter, r *http.Request) {
 	inBucket := make(map[string]bool, len(objs))
 	base := strings.TrimRight(cfg.PublicBase, "/")
 	orphans := []syncObject{}
+	orphanURLs := []string{}
 	for _, o := range objs {
 		inBucket[o.Key] = true
 		if known[o.Key] || strings.HasPrefix(o.Key, media.VariantPrefix) {
@@ -95,17 +96,28 @@ func (a *App) SyncScan(w http.ResponseWriter, r *http.Request) {
 		}
 		ext := strings.ToLower(path.Ext(o.Key))
 		url := base + "/" + o.Key
-		refs, _ := a.DB.MediaURLRefPosts(r.Context(), url)
+		orphanURLs = append(orphanURLs, url)
 		orphans = append(orphans, syncObject{
 			Key: o.Key, Filename: path.Base(o.Key), Size: o.Size, MIME: mimeOf(ext, ""),
-			URL: url, Allowed: typeAllowed(ext, cfg.Allowed), RefPosts: refs, LastModified: o.LastModified,
+			URL: url, Allowed: typeAllowed(ext, cfg.Allowed), LastModified: o.LastModified,
 		})
+	}
+	// 引用数一次查完:逐条 position() 全表扫会被孤儿数量放大成上千次扫描。
+	// 这里只影响清单展示;SyncApply 真删之前还会用单条查询逐个复核,所以不构成删除依据。
+	orphanRefs, err := a.DB.MediaURLRefPostsBatch(r.Context(), orphanURLs)
+	if err != nil {
+		a.failInternal(w, r, "count orphan refs", err)
+		return
+	}
+	for i := range orphans {
+		orphans[i].RefPosts = orphanRefs[orphans[i].URL]
 	}
 	sort.SliceStable(orphans, func(i, j int) bool { return orphans[i].LastModified.After(orphans[j].LastModified) })
 
 	missing := []syncRecord{}
 	other := []syncRecord{} // 记录指向别的桶/域名(历史配置),不参与本次对账,也不提供任何删除动作
 	s3Count := 0
+	missingIDs, missingURLs := []int64{}, []string{}
 	for _, m := range recs {
 		if m.Storage != "s3" && !strings.HasPrefix(m.Storage, "s3:") {
 			continue
@@ -123,11 +135,20 @@ func (a *App) SyncScan(w http.ResponseWriter, r *http.Request) {
 		if truncated || inBucket[m.Key] {
 			continue
 		}
-		refs, _ := a.DB.MediaRefPosts(r.Context(), m.ID, m.URL)
+		missingIDs = append(missingIDs, m.ID)
+		missingURLs = append(missingURLs, m.URL)
 		missing = append(missing, syncRecord{
 			ID: m.ID, Filename: m.Filename, Key: m.Key, URL: m.URL, MIME: m.MIME,
-			Size: m.Size, CreatedAt: m.CreatedAt, RefPosts: refs,
+			Size: m.Size, CreatedAt: m.CreatedAt,
 		})
+	}
+	missingRefs, err := a.DB.MediaRefPostsBatch(r.Context(), missingIDs, missingURLs)
+	if err != nil {
+		a.failInternal(w, r, "count missing refs", err)
+		return
+	}
+	for i := range missing {
+		missing[i].RefPosts = missingRefs[missing[i].ID]
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

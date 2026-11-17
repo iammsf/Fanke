@@ -30,7 +30,10 @@ type Config struct {
 	DatabaseURL string // postgres://...;空 = 未配置(引导模式)
 	JWTSecret   string // 空 = 未生成
 	RecoveryKey string // 找回模式口令(向导重配数据库时需出示)
-	ConfigPath  string
+	// SiteURL 站点规范地址(如 https://boke.example.com)。空 = 按请求 Host 推导,
+	// 但 Host 是客户端可控的,前面若挂了不按 Host 分键的缓存就会被投毒。
+	SiteURL    string
+	ConfigPath string
 
 	AccessTokenTTL  int // 秒
 	RefreshTokenTTL int // 秒
@@ -80,6 +83,7 @@ func Load() *Config {
 		DatabaseURL:     get("DATABASE_URL", ""),
 		JWTSecret:       get("JWT_SECRET", ""),
 		RecoveryKey:     get("RECOVERY_KEY", ""),
+		SiteURL:         get("SITE_URL", ""),
 		ConfigPath:      FilePath(),
 		AccessTokenTTL:  getenvInt("ACCESS_TOKEN_TTL", get, 900),
 		RefreshTokenTTL: getenvInt("REFRESH_TOKEN_TTL", get, 30*24*3600),

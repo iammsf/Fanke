@@ -42,6 +42,13 @@ type App struct {
 	s3Stores map[string]media.Storage
 	s3Errors map[string]error
 
+	// S3 配置快照缓存:thumbSource 与 mediaStorage 是每次图片请求都要走的热路径,
+	// 而 repo.S3Settings 每次都要读库并对每个桶做一次 AES-GCM 解密。
+	s3SettMu      sync.Mutex
+	s3SettGen     uint64
+	s3SettExpires time.Time
+	s3Sett        repo.S3Settings
+
 	// 外链图代抓客户端(重定向也过白名单,防 SSRF)
 	thumbOnce sync.Once
 	thumbHTTP *http.Client
@@ -138,6 +145,43 @@ func (a *App) s3StoreConfig(ctx context.Context, cfg media.S3Config) (media.Stor
 		return nil, cfg, err
 	}
 	return store, cfg, nil
+}
+
+// s3Settings 是 repo.S3Settings 的缓存版,只给每次图片请求都要走的热路径用
+// (thumbSource 判定图源、mediaStorage 取存储驱动)。失效挂在 publicCache 的换代号上:
+// 改 S3 配置的入口会 publicCache.clear(),保存后立即生效,不需要单独的失效路径。
+// 读写 S3 设置的管理接口仍直接调 a.DB.S3Settings,免得看到自己刚写下去的旧值。
+func (a *App) s3Settings(ctx context.Context) (repo.S3Settings, error) {
+	if a.DB == nil {
+		return repo.S3Settings{}, nil
+	}
+	gen := a.publicCache.gen()
+	a.s3SettMu.Lock()
+	if a.s3SettGen == gen && time.Now().Before(a.s3SettExpires) {
+		s := a.s3Sett
+		a.s3SettMu.Unlock()
+		// 桶切片复制一份再交出去:缓存是所有调用方共享的,不能让别人改到快照里的凭据。
+		s.Buckets = append([]media.S3Config(nil), s.Buckets...)
+		return s, nil
+	}
+	a.s3SettMu.Unlock()
+
+	s, err := a.DB.S3Settings(ctx)
+	if err != nil {
+		return repo.S3Settings{}, err // 失败不缓存,下一次请求重试
+	}
+
+	a.s3SettMu.Lock()
+	// 换代号变了说明期间有人清过缓存,不能把旧快照回填进新一代
+	if a.publicCache.gen() == gen {
+		a.s3SettGen, a.s3Sett = gen, s
+		a.s3Sett.Buckets = append([]media.S3Config(nil), s.Buckets...)
+		a.s3SettExpires = time.Now().Add(publicCacheTTL)
+	}
+	a.s3SettMu.Unlock()
+
+	s.Buckets = append([]media.S3Config(nil), s.Buckets...)
+	return s, nil
 }
 
 type errResp struct {

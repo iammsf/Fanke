@@ -127,6 +127,9 @@ func (a *App) ListPostsPublic(w http.ResponseWriter, r *http.Request) {
 func (a *App) ListPostsAdmin(w http.ResponseWriter, r *http.Request) {
 	q := parsePostQuery(r, r.URL.Query().Get("status"))
 	q.PublicOnly = false
+	if u := currentUser(r); u.Role != "admin" {
+		q.AuthorID = u.ID
+	}
 	a.renderPostList(w, r, q)
 }
 
@@ -220,13 +223,8 @@ func (a *App) GetPostAdmin(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, http.StatusBadRequest, "bad id")
 		return
 	}
-	p, err := a.DB.PostByID(r.Context(), id)
-	if errors.Is(err, repo.ErrNotFound) {
-		a.fail(w, http.StatusNotFound, "not found")
-		return
-	}
-	if err != nil {
-		a.fail(w, http.StatusInternalServerError, "internal error")
+	p, ok := a.requireOwnPost(w, r, id)
+	if !ok {
 		return
 	}
 	full, err := a.DB.PostBySlug(r.Context(), p.Slug, false, false)
@@ -317,13 +315,8 @@ func (a *App) UpdatePost(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, http.StatusBadRequest, "bad id")
 		return
 	}
-	old, err := a.DB.PostByID(r.Context(), id)
-	if errors.Is(err, repo.ErrNotFound) {
-		a.fail(w, http.StatusNotFound, "not found")
-		return
-	}
-	if err != nil {
-		a.fail(w, http.StatusInternalServerError, "internal error")
+	old, ok := a.requireOwnPost(w, r, id)
+	if !ok {
 		return
 	}
 	oldFull, err := a.DB.PostBySlug(r.Context(), old.Slug, false, false)
@@ -409,30 +402,21 @@ func (a *App) DeletePost(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, http.StatusBadRequest, "bad id")
 		return
 	}
-	old, err := a.DB.PostByID(r.Context(), id)
-	if errors.Is(err, repo.ErrNotFound) {
-		a.fail(w, http.StatusNotFound, "not found")
+	if _, ok := a.requireOwnPost(w, r, id); !ok {
 		return
 	}
-	if err != nil {
-		a.fail(w, http.StatusInternalServerError, "internal error")
+	if err := a.deletePostWithHooks(r.Context(), id); err != nil {
+		var rejected rejectedError
+		switch {
+		case errors.Is(err, repo.ErrNotFound):
+			a.fail(w, http.StatusNotFound, "not found")
+		case errors.As(err, &rejected):
+			a.fail(w, http.StatusUnprocessableEntity, rejected.Error())
+		default:
+			a.fail(w, http.StatusInternalServerError, "delete failed")
+		}
 		return
 	}
-	full, err := a.DB.PostBySlug(r.Context(), old.Slug, false, false)
-	if err != nil {
-		a.fail(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	data := &LifecycleData{PostID: id, OldPost: full, ContentHTML: full.ContentHTML}
-	if err := a.dispatchLifecycle(r.Context(), BeforePostDelete, data); err != nil {
-		a.fail(w, http.StatusUnprocessableEntity, err.Error())
-		return
-	}
-	if err := a.DB.DeletePost(r.Context(), id); err != nil {
-		a.fail(w, http.StatusInternalServerError, "delete failed")
-		return
-	}
-	_ = a.dispatchLifecycle(r.Context(), AfterPostDeleted, data)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -441,6 +425,9 @@ func (a *App) SetPostPublic(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		a.fail(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	if _, ok := a.requireOwnPost(w, r, id); !ok {
 		return
 	}
 	var req struct {
@@ -463,6 +450,9 @@ func (a *App) PublishPost(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, http.StatusBadRequest, "bad id")
 		return
 	}
+	if _, ok := a.requireOwnPost(w, r, id); !ok {
+		return
+	}
 	if err := a.DB.PublishPost(r.Context(), id); err != nil {
 		a.fail(w, http.StatusInternalServerError, "publish failed")
 		return
@@ -474,6 +464,9 @@ func (a *App) SetPostSticky(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		a.fail(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	if _, ok := a.requireOwnPost(w, r, id); !ok {
 		return
 	}
 	var req struct {
@@ -491,7 +484,11 @@ func (a *App) SetPostSticky(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) ListStickyPosts(w http.ResponseWriter, r *http.Request) {
-	items, err := a.DB.ListStickyPosts(r.Context())
+	var scope int64
+	if u := currentUser(r); u.Role != "admin" {
+		scope = u.ID
+	}
+	items, err := a.DB.ListStickyPosts(r.Context(), scope)
 	if err != nil {
 		a.failInternal(w, r, "list sticky", err)
 		return

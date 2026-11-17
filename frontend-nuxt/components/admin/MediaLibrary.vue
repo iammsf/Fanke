@@ -13,6 +13,12 @@ const { isEnabled, refreshPublic, loaded, contributions, contributionsLoaded, re
 
 const focusActive = computed(() => isEnabled('image-focus'))
 const s3Storage = computed(() => contributions.value?.s3_storage === true)
+// 媒体库对账(/admin/media/sync/*)是管理员专属:它会列整个桶、扫全表引用,还能删桶内对象。
+// 作者看不到入口,免得点进去吃一个 403。me 由后台布局统一加载,这里只读不额外发请求。
+const { me } = useAdminMe()
+const isAdmin = computed(() => me.value?.role === 'admin')
+// 媒体是共享池,删除/转移会破坏他人文章配图,破坏性入口与对账一样只给管理员。
+const canSync = isAdmin
 if (import.meta.client && !contributionsLoaded.value) void refreshContributions()
 if (import.meta.client && !loaded.value) void refreshPublic()
 
@@ -389,7 +395,7 @@ const dropMissing = async () => {
     <div v-else-if="!data?.items.length">
       <p class="muted">{{ mode === 'pick' ? '媒体库为空,请先上传。' : '媒体库为空。' }}</p>
       <!-- 媒体库记录为空时也要能进入同步(桶里有对象、记录一条都没有,正是最需要同步的场景) -->
-      <el-button v-if="mode === 'manage' && s3Storage" size="small" plain @click="openSync">同步 S3</el-button>
+      <el-button v-if="mode === 'manage' && s3Storage && canSync" size="small" plain @click="openSync">同步 S3</el-button>
     </div>
     <template v-else>
       <!-- 批量工具栏 -->
@@ -402,11 +408,11 @@ const dropMissing = async () => {
         <span v-if="selected.size" class="muted">已选 {{ selected.size }} 项</span>
         <template v-if="selected.size">
           <el-button size="small" @click="batchDownload">下载</el-button>
-          <el-button v-if="s3Storage" size="small" @click="batchTransfer">转移到 S3</el-button>
-          <el-button size="small" type="danger" @click="batchDelete">删除</el-button>
+          <el-button v-if="s3Storage && isAdmin" size="small" @click="batchTransfer">转移到 S3</el-button>
+          <el-button v-if="isAdmin" size="small" type="danger" @click="batchDelete">删除</el-button>
           <el-button size="small" text @click="selected.clear()">取消</el-button>
         </template>
-        <el-button size="small" plain style="margin-left: auto" v-if="s3Storage" @click="openSync">同步 S3</el-button>
+        <el-button size="small" plain style="margin-left: auto" v-if="s3Storage && canSync" @click="openSync">同步 S3</el-button>
       </div>
 
       <div :class="['media-grid', mode]" :style="mode === 'pick' ? { gridTemplateColumns: `repeat(${cols}, ${cardW}px)`, gridAutoRows: `${cardH}px`, justifyContent: 'center', alignContent: 'center' } : undefined">
@@ -441,7 +447,7 @@ const dropMissing = async () => {
               <el-button v-if="focusActive && m.mime.startsWith('image/')" size="small" @click="openFocus(m)">选择焦点</el-button>
               <el-button v-if="m.mime.startsWith('image/')" size="small" @click="openViewer(m)">预览</el-button>
               <el-button size="small" tag="a" :href="m.url" target="_blank">打开</el-button>
-              <el-button size="small" type="danger" @click="del(m)">删除</el-button>
+              <el-button v-if="isAdmin" size="small" type="danger" @click="del(m)">删除</el-button>
             </template>
           </div>
         </div>

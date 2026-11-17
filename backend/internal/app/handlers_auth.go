@@ -1,6 +1,7 @@
 package app
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -174,7 +175,10 @@ func (a *App) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 // ipHash 限流键:只信任反向代理写入的 X-Real-IP。
 // 不使用 X-Forwarded-For —— 该头可由客户端任意伪造,会让攻击者每请求换个假 IP 绕过限流。
-func ipHash(r *http.Request) string {
+// 用站点自己的 JWT_SECRET 做 HMAC,不是固定盐:固定盐等于把算法公开,拖库之后
+// 可以离线把整个 IPv4 空间跑一遍反查出评论者真实 IP。ip_hash 没有任何读取方
+// (模型上是 json:"-"),所以换算法不影响既有功能,只是历史值对不上新值。
+func (a *App) ipHash(r *http.Request) string {
 	ip := strings.TrimSpace(r.Header.Get("X-Real-IP"))
 	if ip == "" {
 		if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
@@ -183,6 +187,7 @@ func ipHash(r *http.Request) string {
 			ip = r.RemoteAddr
 		}
 	}
-	sum := sha256.Sum256([]byte(ip + "|fanke-salt"))
-	return hex.EncodeToString(sum[:8])
+	mac := hmac.New(sha256.New, []byte(a.Cfg.JWTSecret))
+	mac.Write([]byte(ip))
+	return hex.EncodeToString(mac.Sum(nil)[:8])
 }

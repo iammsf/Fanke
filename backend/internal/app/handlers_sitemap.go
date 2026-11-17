@@ -20,11 +20,16 @@ func (a *App) SitemapXML(w http.ResponseWriter, r *http.Request) {
 		a.failInternal(w, r, "sitemap", err)
 		return
 	}
-	scheme := "https"
-	if p := r.Header.Get("X-Forwarded-Proto"); p != "" {
-		scheme = strings.Split(p, ",")[0]
+	// 配了 SITE_URL 就用它:Host 头由客户端控制,前面若挂了不按 Host 分键的缓存,
+	// 伪造 Host 就能把 sitemap 里所有 <loc> 改成攻击者的域名(缓存投毒)。
+	base := strings.TrimRight(a.Cfg.SiteURL, "/")
+	if base == "" {
+		scheme := "https"
+		if p := r.Header.Get("X-Forwarded-Proto"); p != "" {
+			scheme = strings.Split(p, ",")[0]
+		}
+		base = strings.TrimRight(scheme+"://"+r.Host, "/")
 	}
-	base := strings.TrimRight(scheme+"://"+r.Host, "/")
 
 	type url struct {
 		Loc     string `xml:"loc"`

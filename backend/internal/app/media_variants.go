@@ -152,7 +152,7 @@ func (a *App) mediaStorage(ctx context.Context, storage, key, url string) (media
 	if storage != "s3" && !strings.HasPrefix(storage, "s3:") {
 		return nil, fmt.Errorf("unknown storage %s", storage)
 	}
-	settings, err := a.DB.S3Settings(ctx)
+	settings, err := a.s3Settings(ctx)
 	if err != nil {
 		return nil, err
 	}

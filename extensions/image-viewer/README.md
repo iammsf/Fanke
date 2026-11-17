@@ -57,6 +57,22 @@
 | `beforePostUpdate` | 文章更新保存前，执行同样的标签规范化 |
 | `editor.register` | 让后台编辑器加载 `editor.js`，注册 `fanke-img` 节点的渲染与属性面板 |
 
+## 标签回落声明
+
+`info.json` 的 `fallback` 向宿主登记 `<fanke-img>` 在插件不在线时的渲染模板：
+
+```json
+"fallback": {
+  "fanke-img": "<figure class=\"fanke-fallback\"><img src=\"{{src}}\" alt=\"{{caption}}\" loading=\"lazy\"><figcaption>{{caption}}</figcaption></figure>"
+}
+```
+
+- 宿主在安装/更新时把模板消毒后记进**自己的**账本（settings 键 `tag_fallbacks`），卸载插件也不删除——正文里已写入的标签必须永远能渲染。
+- 触发条件是宿主的 `/api/v1/ext` 里 `enabled` 不含 `image-viewer`：手动禁用、卸载，或插件文件损坏（`index.html` 丢失、声明了 `editor.register` 却没有 `editor.js`/`editor.ts`）都算。
+- 插件**在线时不走这条模板**：`fanke-img` 仍由宿主的 `useImageViewer.ts` 渲染，因为要合并 `des_sty` 令牌与插件默认配置，模板做不到。
+- 回落态只用 `src` 与图注；`des_pos`、`des_sty`、宽度与圆角等定制不生效。
+- 机制细节见仓库 `doc/plugins.md` 的「标签回落账本（`fallback`）」。
+
 ## 数据存储
 
 - 使用宿主插件 KV 表 `ext_data_image_viewer`，只保存一条记录：key 为 `config`。
@@ -73,7 +89,8 @@
 
 ## 安全与限制
 
-- 文章页只有在成功读取到插件公开配置后才转换标签；插件未启用、未安装或配置读取失败时，原样输出正文 HTML，不强行干预。
+- 文章页只有在成功读取到插件公开配置后才按插件样式转换标签；插件在线但配置读取失败时原样输出正文 HTML，不强行干预。插件**不在线**（禁用/卸载/文件损坏）时改由宿主的回落账本渲染成「图 + 图注」，不再是裸标签。
+- 后台编辑器里插件不在线时，该标签被包成整块锁定的信封节点（`contenteditable="false"`，暖色虚线框）：里面的视觉只是替身，改它写不回落库标签，保存时按 `data-fanke-orig` 原样还原，因此停用期间编辑正文不会丢标签。这段时间要改标签本身，用右键「编辑 HTML」或「工具 → 源代码」。
 - 普通 `<img>` 的替换受 `replace_img` 控制；无 `src` 的图片和不位于链接内的判断之外的情况保持原样，位于 `<a>` 内的图片会被跳过，避免把 `figure` 塞进链接。
 - 替换普通 `<img>` 时会剔除原有 `style` 与 `des*` 属性，其余属性（含 `srcset`、`sizes`、宽高、`loading`）原样保留；未写 `loading` 时补 `loading="lazy"`。
 - 标签的 `des_pos` 整体覆盖默认位置；`des_sty` 按 token 合并而不是整段覆盖。`hidden` 以「默认或标签任一为真」为准。

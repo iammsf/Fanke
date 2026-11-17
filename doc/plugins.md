@@ -36,6 +36,7 @@ my-plugin.zip
 | `url` | 可选 | 作者主页(展示在详情页,点击跳转) |
 | `update_url` | 可选 | 检查更新地址。推荐指向仓库共享清单 `updates.json`(后端自动取 `plugins.<slug>`);也兼容旧的扁平格式 `{version, download_url?, date?}`。配置后列表页出现「检查更新」按钮 |
 | `favico` | 可选 | 包内图标文件路径(如 `favico.svg`),详情页/列表页展示 |
+| `fallback` | 可选 | 对象,声明本插件写入正文的每个自定义标签的回落模板(标签名 → HTML),见下节。**只要插件会往正文写自定义标签就应该声明**,否则插件停用后正文里的标签会退化成浏览器不认识的裸标签 |
 
 示例：
 
@@ -51,6 +52,59 @@ my-plugin.zip
   "request": ["store.ensure_table", "store.save", "store.get_batch", "media.list"]
 }
 ```
+
+### 标签回落账本（`fallback`）
+
+插件往正文里写的自定义标签(如 image-viewer 的 `<fanke-img>`)是**插件的私有约定**,核心不认识。插件被禁用、卸载或文件损坏后,已发布文章里的这些标签必须由核心兜底渲染,否则正文就是一堆裸标签。
+
+为此核心维护一本**自己的**「标签回落账本」(settings 键 `tag_fallbacks`)：安装与更新插件时,按 `info.json` 的 `fallback` 字段把「标签 → HTML 模板」登记进去。**卸载插件不删除登记**——正文里的标签是历史事实,必须永远能渲染。
+
+```json
+{
+  "fallback": {
+    "fanke-img": "<figure class=\"fanke-fallback\"><img src=\"{{src}}\" alt=\"{{caption}}\" loading=\"lazy\"><figcaption>{{caption}}</figcaption></figure>"
+  }
+}
+```
+
+#### 触发条件
+
+公开接口 `GET /api/v1/ext` 的 `enabled` 口径是「已启用 + 已初始化 + 插件文件完好」：
+
+- 手动禁用 / 卸载 → 不在 `enabled` 里；
+- 文件损坏(详情页 `index.html` 丢失,或声明了 `editor.register` 却没有 `editor.js`/`editor.ts`)→ 不在 `enabled` 里,同时列进 `unhealthy`；
+- 只要某个已登记标签的插件不在 `enabled` 里,渲染端就自动改用账本模板。
+
+这套判定对**任何插件**都成立,核心里没有针对具体插件的回落分支。
+
+#### 占位符
+
+模板里可写 `{{属性名}}` 与 `{{caption}}`,渲染时代入落库标签上的实际值：
+
+| 占位符 | 取值 |
+| --- | --- |
+| `{{caption}}` | 标签内文本;为空时依次退回 `des`、`alt` 属性 |
+| `{{src}}`、`{{任意属性名}}` | 标签上的同名属性,取不到则为空串 |
+
+属性名不区分大小写(`{{SRC}}` 等同 `{{src}}`)。**代入值一律 HTML 转义**,模板本身也已在安装时被 `render.SanitizeHTML` 消毒(script、事件属性、`javascript:` URL 在安装阶段就被剔掉),所以账本渲染没有任何执行面。模板 ≤2KB。
+
+#### 所有权与生命周期
+
+- 标签名须匹配 `^[a-z][a-z0-9-]{0,47}$`；
+- **一个标签只能属于一个插件**。别的插件已登记的标签再声明会被拒绝安装(400),避免两个插件抢同一个标签把正文改坏；
+- 更新插件时先清掉该插件的旧登记再写入新声明,所以新版本不再声明的标签会自动从账本移除；
+- 登记写库失败会回滚整个安装(删目录 + 删记录),不会出现「插件装上了但没回落」。
+
+#### 两个渲染面
+
+| 场景 | 行为 |
+| --- | --- |
+| 文章页 | `useTagFallbacks().render(html)` 把不在线插件的标签直接替换成模板输出(纯替换,不可交互) |
+| 后台可视化编辑器 | 同样的标签被包成**信封节点**:`<div class="fanke-fallback-box" contenteditable="false" data-fanke-fallback="标签名" data-fanke-orig="原样落库标签">模板视觉</div>`。保存时拆信,`data-fanke-orig` 原样还原,插件停用期间编辑正文不会丢标签 |
+
+信封整体 `contenteditable="false"` 是刻意的：里面的视觉只是替身,改它写不回落库标签,与其悄悄丢掉用户的编辑不如直接锁住(暖色虚线框 + 悬停提示)。插件恢复在线后,标签重新交给插件自己的 `toEditor`,信封自动消失。这段时间要改标签本身,可右键「编辑 HTML」或用「工具 → 源代码」——那两个面始终只展示/接收落库形态。
+
+> 核心集成代码在 setup 期通过 `composables/useCoreTagRenderers.ts` 的 `claim(tag)` **认领**自己会渲染的落库标签(`useImageViewer` 认领 `fanke-img`)：标签被认领且插件**在线**时由核心渲染(要合并 `des_sty` 令牌与插件默认配置),账本模板只在插件不在线、或没人认领该标签时兜底。核心里没有任何针对具体插件的分支——新增插件的核心集成代码自己 `claim` 即可。
 
 ### info.json 中的 Go 子进程插件字段
 
@@ -609,10 +663,12 @@ document.getElementById('scanBtn').addEventListener('click', function () {
 
 ### 6. 前端集成点（核心代码，非插件包内）
 
-- `composables/useImageViewer.ts`：插件默认配置拉取 + **文章页** HTML 转换（`transform`)。文章页 `pages/posts/[slug].vue` 对 `content_html` 应用 `transform`；`setTagSrc` 供编辑器把选中的图片 URL 写回第 N 个 `<fanke-img>`。
+- `composables/useImageViewer.ts`：插件默认配置拉取 + **文章页** HTML 转换（`transform`)。文章页 `pages/posts/[slug].vue` 对 `content_html` 应用 `iv.transform(fb.render(html))`；插件页勾选「替换默认 img 标签」(`replace_img`) 后普通 `<img>` 也按插件样式渲染（无 src、位于 `<a>` 内的除外），未勾选时只有 `<fanke-img>` 走插件。
+- `utils/tagFallback.ts` + `composables/useTagFallbacks.ts`：通用回落渲染端，按后端账本处理**所有**插件的自定义标签（不认识具体插件）。`useImageViewer` 通过 `composables/useCoreTagRenderers.ts` 认领了 `fanke-img`，所以它在线时仍走上面的 `transform`，只有不在线时才用账本模板。`enabled` / `editors` / `fallbacks` 三者由 `composables/useExtensions.ts` 一次 `/ext` 拉齐并共享，不再各自请求。
 - 编辑器不再自己预览 `<fanke-img>`：`components/admin/RichTextEditor.vue`（TinyMCE 宿主）只负责**落库形态 ⇄ 画布形态**互转与选区/面板事件，具体怎么渲染、怎么读写属性全部由插件 `editor.ts` 注册的 `toEditor` / `fromEditor` / `read` / `apply` 决定（见下文「11. 编辑器能力注册」）。落库形态绝不回灌编辑器,否则会被解析成裸标签并丢属性。
+- **所有 HTML 文本界面只露落库形态的标签**：右键「编辑 HTML」的代码块与「工具 → 源代码」对话框展示/接收的都是 `<img …>` / `<fanke-img …>说明</fanke-img>`，画布的 `<figure data-fanke-node>` 包装是内部表示，不外露给用户写；应用时再转回画布形态。因此未勾选替换时手打 `<img>` 保持原生、手打 `<fanke-img>` 才走插件，勾选后两者在文章页都按插件渲染。
 - `components/admin/PostEditor.vue`：全页共用一个媒体选择对话框,插入插件节点时由 `insert-node` 事件打开,选中后调用 `insertNode(tag, media)` 写入画布;保存走 `getContent()`(内部即 `fromEditorHtml`)。
-- 文章页样式类名前缀 `iv-`，定义在 `assets/css/global.css`；编辑器画布内的样式由 `editor.ts` 内联生成，两边互不共用。
+- 文章页样式类名前缀 `iv-`，定义在 `assets/css/global.css`；回落态用中性的 `.fanke-fallback`（同样在 `global.css`，只给排版，不猜插件外观）；编辑器画布内的样式由 `editor.ts` 内联生成，回落信封的样式在 `RichTextEditor.vue` 的 `content_style` 里，两边互不共用。
 
 ### 7. 1.2 更新记录（2026.10.27）
 
@@ -648,7 +704,7 @@ document.getElementById('scanBtn').addEventListener('click', function () {
 
 插件包可选提供 editor.ts，声明"这个插件要接管哪种标签、在编辑器里怎么显示、属性面板有哪些字段"：
 
-`	s
+```js
 window.FankeEditor.registerNode({
   tag: 'fanke-img',            // 落库标签名
   label: '图片',
@@ -663,7 +719,7 @@ window.FankeEditor.registerNode({
   read: (el) => ({ … }),
   apply: (el, values) => { … },
 })
-`
+```
 
 规则：
 - 核心编辑器不包含任何具体插件知识；未安装插件时注册表为空，插入菜单只有「普通 <img>」。
@@ -671,3 +727,17 @@ window.FankeEditor.registerNode({
 - `toEditor` 返回的根元素必须带 `data-fanke-node="<tag>"`，核心据此在保存时回写给 `fromEditor`。
 - 面板字段类型支持 `text` / `number` / `color` / `select` / `checkbox`；`color` 自动渲染取色器。
 - 插件是否被加载由后端 /api/v1/ext 的 editors 列表决定：**只有 `info.json` 的 `request` 里声明了 `editor.register` 的启用插件才会注入**；只放 `editor.ts` 而不声明不会生效。
+
+### 12. 标签回落（1.7 起）
+
+机制见「一、插件包格式 → 标签回落账本（`fallback`）」。image-viewer 登记的模板：
+
+```json
+"fallback": {
+  "fanke-img": "<figure class=\"fanke-fallback\"><img src=\"{{src}}\" alt=\"{{caption}}\" loading=\"lazy\"><figcaption>{{caption}}</figcaption></figure>"
+}
+```
+
+- 插件在线时**不走**这条模板：`fanke-img` 由核心集成代码渲染（`useImageViewer.ts` 要合并 `des_sty` 令牌与插件默认配置，模板做不到），它由 `useCoreTagRenderers().claim('fanke-img')` 认领，模板只作兜底。
+- 插件不在线时文章页按模板出「图 + 图注」，编辑器按信封锁定该块（保存原样还原落库标签）。
+- 回落态只用标签上的 `src` 与图注，`des_pos` / `des_sty` / 宽度圆角等定制**不生效**——那些语义属于插件本身，核心不猜。

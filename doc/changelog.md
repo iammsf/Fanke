@@ -8,6 +8,10 @@
 
 ### 插件
 
+- **image-viewer 1.7：向核心登记 `<fanke-img>` 的回落模板**
+  - `info.json` 新增 `fallback` 字段，声明插件停用/卸载/文件损坏时正文里 `<fanke-img>` 的渲染方式（`figure` + `img` + `figcaption`，占位符 `{{src}}` / `{{caption}}`）。
+  - 此前插件一旦不在线，已发布文章里的 `<fanke-img>` 会退化成浏览器不认识的裸标签（既不显示图也不显示图注），编辑器里更是直接暴露原始标签文本。
+  - 账本在**安装/更新插件时**登记，所以已装 1.6 的站点要升级到 1.7 才有回落（后台插件页会出现更新提示）。
 - **image-viewer 1.6：修复可视化编辑器里直接改图注不入库**
   - 画布上 `figcaption` 的文字现在是图注的唯一权威来源。此前 `editor.ts` 的 `fromEditor` / `read` 优先读画布 `figure` 上的 `des` **属性**，而用户改的是 `figcaption` 的**文字**，保存时新文字被旧属性覆盖，写回数据库的仍是旧图注；取值顺序现已与文章页 `useImageViewer.ts` 对齐。
   - `render()` 改为始终输出 `figcaption`（`des_sty` 含 `hidden` 时用 `display:none`），且不再往画布 `figure` 写 `des`：清空图注会真的存成空、隐藏图注不再丢失、空图注也能直接点进去输入。
@@ -15,16 +19,78 @@
 
 ### 后端
 
+- **新增通用「标签回落账本」**（`backend/internal/app/extensions_fallback.go`）：核心不再为任何具体插件写死回落分支，插件在 `info.json` 声明 `fallback`（标签 → HTML 模板），安装/更新时由核心消毒后记进自己的 settings（键 `tag_fallbacks`）。
+  - **卸载插件不删账本**：正文里已写入的标签是历史事实，必须永远能渲染。
+  - 模板在安装时用哨兵 URL 占位后过 `render.SanitizeHTML`（script/事件属性/`javascript:` 直接被剔掉），`{{占位符}}` 不会被 URL 校验百分号编码毁掉；模板 ≤2KB，标签名须匹配 `^[a-z][a-z0-9-]{0,47}$`。
+  - **标签所有权唯一**：别的插件已登记的标签再声明会被拒绝（400）；更新时先清掉本插件旧登记，新版本不再声明的标签自动移除；登记写库失败会回滚整个安装（删目录 + 删记录）。
+  - `GET /api/v1/ext` 的 `enabled` 口径改为「已启用 + 已初始化 + **插件文件完好**」（详情页 `index.html` 必须在；声明了 `editor.register` 的必须有 `editor.js`/`editor.ts`），文件损坏的插件列进新增的 `unhealthy`，并随 `fallbacks` 一起下发给渲染端。这样插件文件被删/损坏也等同「不在线」，自动走回落，而不是让编辑器去加载一个 404 的脚本。
+  - 覆盖上传安装与在线升级两条路径（`handlers_extensions.go` / `handlers_extensions_update.go`）。
 - **多桶上传写库失败**：`media.storage` / `media_variants.storage` 的 CHECK 只允许 `'s3'`/`'local'`，而多桶上传写的是 `'s3:<桶ID>'`。在未手改过约束的库上插入会失败，并连带回删刚上传的对象与派生图。新增 `0010_media_storage_bucket.sql` 放宽为 `local | s3 | s3:%`。
 - **删除 s3-storage 的保护失效**：`HasS3MediaReferences` 只匹配 `storage='s3'`，多桶记录全被漏掉，导致仍有媒体引用时也能把插件删掉。
 - **热接入数据库后 AI 接口一直 500**：`attachDB` 没有重建 `ai.Client`，它仍持有启动时的 nil DB；引导/找回模式下配置完数据库后，`ai.chat` 与后台 AI 接口会 nil 解引用 panic，直到重启进程才恢复。
+- **插件升级后编辑器仍跑旧代码**：插件静态文件一律发 `Cache-Control: public, max-age=3600`，而插件详情页 `index.html` 是 `no-store`。升级后一小时内浏览器直接复用缓存里的旧 `editor.js`，后台版本号已是新版、编辑器行为还是旧版（image-viewer 1.6 的图注修复装完仍「不落库」就是这个原因）。现在代码类文件（js/mjs/cjs/ts/css/html/json/map）改为 `no-cache`，靠 `Last-Modified` 回源校验，内容没变仍是 304；图片等二进制保留一小时缓存。
 - `go test ./...` 不再因缺少 `extensions/s3-storage/server/bin/` 构建产物而整体失败：该用例改为跳过并打印构建命令。
+- **管理页批量操作 API**（`backend/internal/app/handlers_bulk.go`）：`POST /admin/{posts,comments,users,extensions}/bulk`，统一 `{action, ids|slugs, …}` 入参、动作白名单、逐项容错返回 `{ok, failed[]}`，单次上限 500 项。
+  - 纯 SQL 动作（发布/公开/置顶/评论状态）一条 `WHERE id = ANY($1)` 打完，不再逐条往返；带生命周期钩子的动作（删文章）仍逐条走，保住 `BeforePostDelete` 的否决权。
+  - 批量删用户前先一次查清 `posts.author_id` / `comments.user_id` 引用（两者都是 `NO ACTION` 外键，直接删会 500），翻译成「仍有文章，请先转移作者」这类可读原因。
+  - 批量置顶接着当前最大权重按勾选顺序往后排，与单条 `SetPostSticky` 的「排到队尾」语义一致。
+  - 顺手把三处与单条接口重复的逻辑抽成共享实现（删文章、启用/停用插件、卸载插件），并用 `rejectedError` 区分「业务规则拒绝」（422/409）与「基础设施故障」（500）——此前钩子否决会被报成 500。
+- **热路径缺索引**：新增 `0011_hot_path_indexes.sql`，补 `media(url)`、`media(key)`、`post_terms(term_id)`、`comments(status, created_at DESC)` 四个索引，分别对应媒体引用统计、媒体库对账、文章页分类标签、后台评论待审列表四条实际查询。
+- **媒体库对账从作者组移到管理员组**：`/admin/media/sync/{scan,apply}` 能列整个桶、扫全表引用、删桶内对象，属于基础设施级操作；放在作者组时任何作者点一下就能触发一次全桶 `ListObjects` + 全表 `position()` 扫描。
+- **作者可以改删任何人的文章（横向越权）**：路由分组只做了角色门槛，`requireRole("author")` 的实际语义是「admin 或 author 都放行」，归属从来没校验过——任何作者拿到别人的文章 id 就能改、删、发布、切公开、置顶。现在按「管理员管理所有文章，作者只能动自己的文章」落地：新增 `canEditPost` / `requireOwnPost`（`handlers_posts_authz.go`），接入全部写路径（`UpdatePost` / `DeletePost` / `PublishPost` / `SetPostPublic` / `SetPostSticky` / `SetStickyOrder` / `BulkPosts` / `GetPostAdmin`），非本人文章一律 403「只能操作自己的文章」。
+  - 批量接口保持**逐项容错**：别人的 id 跳过并记进 `failed[]`，不整批拒绝；归属过滤在 `deletePostWithHooks` 之前完成（该函数被单条删除共用，自身不校验归属）。
+  - 后台文章列表对作者按 `author_id` 收窄（`repo.PostQuery.AuthorID`，0 表示不过滤）。该字段只在 `ListPostsAdmin` 一处赋值，`parsePostQuery` 与 `renderPostList` 是公开列表共用的，因此 `GET /posts`、首页、分类、标签、搜索全部不受影响（已逐个调用点核对）。
+  - 顺带修正：`publish` / `public` / `sticky` 单条接口对不存在的 id 从「静默 204」变成 404——归属校验必须先查库，查不到就不该报成功。
+  - `CreatePost` 一直用 `currentUser(r).ID` 作作者、`UpdatePost` 一直沿用 `old.AuthorID`，所以「把文章挂到别人名下」或「改归属」从来做不到，这两处未改。
+- **置顶排序能抹掉全站他人的置顶**：`SetStickyOrder` 的第一条 SQL 是 `UPDATE posts SET sticky=0 WHERE sticky>0 AND NOT (id = ANY($1))`——不分作者地把所有不在传入列表里的置顶取消掉。作者拿自己的 token 只提交自己的文章 id，能通过上面新加的归属校验（每个 id 确实都是他的），然后把管理员和其他作者的置顶全部抹掉。UI 上点不出来，API 直接可达。
+  - `posts.sticky` 是**全站共用的整数序号**（公开列表按它排序），「未包含者一律取消置顶」的语义天然是全局的，所以把重排全站置顶顺序认定为站点级操作：`PUT /admin/posts-sticky` 移入管理员组。作者仍可通过 `POST /admin/posts/{id}/sticky` 置顶/取消置顶自己的文章（沿用「排到队尾」语义）。
+  - `GET /admin/posts-sticky` 留在作者组但按归属收窄（`repo.ListStickyPosts(ctx, authorID)`，0 表示不过滤），作者面板只显示「我置顶的文章」。
+  - 前端：非管理员隐藏「保存顺序」按钮与 ⠿ 拖拽把手，`li` 的 `draggable` 绑定为 `'false'`（枚举属性，浏览器不发起 dragstart），`dragstart`/`dragover` 处理器再兜底一层；标题与空态文案按角色区分，并说明顺序由管理员统一安排。
+- **媒体删除/转移与分类标签删改收归管理员**：媒体是**全站共享池**（`media` 表没有归属列，任何作者上传的图都能被别人引用进正文），所以删除或转移到 S3 会直接破坏他人文章的配图，不是「动自己的东西」。按此把 `DELETE /admin/media/{id}`、`POST /admin/media/batch-delete`、`POST /admin/media/batch-transfer-s3` 移入管理员组；上传、列表、批量打包下载留在作者组（这三者都不改动他人数据）。
+  - 分类标签同理：`PUT /admin/terms/{id}`、`DELETE /admin/terms/{id}` 移入管理员组——改名/删除会连带改掉所有引用它的文章的分类展示。`POST /admin/terms` 留在作者组，作者写文章时仍能新建分类/标签。
+  - 前端媒体库对非管理员隐藏破坏性入口：批量条里的「删除」「转移到 S3」、卡片上的「删除」按钮、「同步 S3」按钮（复用同一个 `isAdmin`，不重复请求 `me`）。「下载」与「取消选择」不受限。
+- **对账接口的 N+1 查询**：`SyncScan` 此前对每个孤儿对象/悬空记录各发一次引用统计（5000 个对象就是 5000 条 SQL），改为 `unnest` 批量一次查完；错误也不再被 `refs, _ :=` 静默吞掉。批量口径只用于**展示**，`SyncApply` 删除前仍逐条用原始单条查询复核，统计出错不可能变成误删。
+- **每次图片请求都读库解密 S3 配置**：`thumbSource` / `mediaStorage` 是热路径，而 `repo.S3Settings` 每次都要读库并对每个桶做一次 AES-GCM 解密。新增 `App.s3Settings` 快照缓存，挂在 `publicCache` 的换代号上——配置一改自动失效，不需要单独的失效路径。
+- **改 S3 配置后最长 30 秒不生效**：`PutS3Config` 既不清 `publicCache` 也不清 `s3Stores`，新桶配置要等公开缓存自然过期才被看见。
+- **缩图并发合并会无限期挂住请求**：`singleflight` 的等待没有带 `ctx`，领头那个若卡在 `image.process` 子进程上，同 key 的后续请求全都放不掉（客户端早断开了也照样挂着）。
+- **`ip_hash` 用固定盐等于把算法公开**：拖库之后可以离线把整个 IPv4 空间跑一遍反查评论者真实 IP。改用站点自己的 `JWT_SECRET` 做 HMAC；`ip_hash` 没有任何读取方（模型上是 `json:"-"`），换算法不影响功能，只是历史值对不上新值。
+- **`sitemap.xml` 的域名来自请求头**：Host 可被伪造，会往站点地图里写进别人的域名（缓存投毒）。新增 `SITE_URL` 配置，优先用它，没有才回落 Host。
+- **更新下载的 curl 通道会跟随未校验的重定向**：`curl -fsSL` 的 `-L` 无条件跟 3xx，而 `validProbeURL` 只校验了最初那个地址——一条外部 https 地址就能把请求引到内网或云元数据（SSRF）。改成不带 `-L` 手动逐跳，每跳都过 `validProbeURL`，跳数上限与已加固的 Go 探测路径一致（4 跳）。curl 通道本身保留：国内服务器直连 GitHub 常超时，它存在的意义就是能复用系统代理。
+  - 顺带修掉一个 Windows 专属故障：Windows 版 curl 的 `-w` 输出是 CRLF，`Atoi("302\r")` 得 0，更新下载会被判成「返回 0」而全线失败。
+- **插件包超限报的是 400**：`maxExtPackage` 超限现在回 413（`Request Entity Too Large`），前端能据此区分「包太大」和「参数错了」。
+- **回落账本登记存在读-改-写竞态**：两个插件同时安装会互相覆盖 `tag_fallbacks`。新增 `repo.MutateSettingLocked`（确保行存在 → `FOR UPDATE` 行锁 → 读 → 改 → 写，单事务），并在动文件系统之前先校验声明，校验不过不落盘。
 
 ### 前端 / 文档
 
+- **插件标签自动回落**（`utils/tagFallback.ts` + `composables/useTagFallbacks.ts`）：按后端下发的账本渲染，核心里没有针对具体插件的分支。
+  - 文章页：`iv.transform(fb.render(content_html))`——插件在线时仍走 image-viewer 的完整渲染（`des_sty` 令牌合并 + 插件默认配置），不在线时按账本模板出图与图注；新增 `.fanke-fallback` 中性排版，任何插件的回落结果都不会撑破正文。
+  - 后台编辑器：不在线插件的标签包成信封 `<div class="fanke-fallback-box" contenteditable="false" data-fanke-fallback data-fanke-orig="原样落库标签">模板视觉</div>`，保存时拆信原样还原，停用期间编辑正文不丢标签。信封整体锁定是刻意的：里面的视觉只是替身，改它写不回落库标签，与其悄悄丢编辑不如锁住（暖色虚线框 + 悬停提示），插件恢复后自动解锁。
+  - 右键「编辑 HTML」与「工具 → 源代码」照旧只展示/接收落库形态，因此插件停用期间仍能手改标签本身。
+- **三处 `/ext` 请求合并成一处**：`useExtensions`、`useEditorRegistry`、`useTagFallbacks` 此前各自 `fetch('/ext')`，现在统一由 `useExtensions.refreshPublic()` 一次拉齐 `enabled` / `editors` / `fallbacks`（带 in-flight 去重），后两者只读共享状态。
+- **四个管理页支持批量选中与批量操作**（文章、评论、用户、插件）：此前这些列表只能一条一条点，删 100 条垃圾评论要点 100 次。
+  - 文章：发布 / 设为公开 / 取消公开 / 置顶 / 取消置顶 / 删除；置顶后重新拉一次权重列表，取消置顶只作用于真的在置顶的项。
+  - 评论：通过 / 待审 / 垃圾 / 删除，用卡片上的复选框多选，切标签页与翻页都会清空选择（避免把看不见的项一起提交）。
+  - 用户：批量删除，当前登录用户那一行不可勾选。
+  - 插件：批量启用/停用、批量卸载；选中项含 s3-storage 时沿用单条操作的「启用可信程序」二次确认，卸载确认文案会说明回落账本仍在（卸载后正文里的插件标签按安装时登记的模板继续渲染，不会丢内容）。
+  - 搜索、切状态、翻页都清空选择，批量完成后只刷新受影响的局部数据。
+- **核心不再为具体插件写死回落分支**：`useTagFallbacks` 里那张 `CORE_RENDERERS = { 'image-viewer': true }` 硬编码表换成 `useCoreTagRenderers()` 认领表——谁渲染某个落库标签，就由谁在 setup 期 `claim(tag)`（`useImageViewer` 认领 `fanke-img`）。以后任何插件的核心集成代码自己认领即可，不需要回头改回落逻辑。用 `useState` 而不是模块级变量：prerender 时模块状态会跨路由残留。
+- **媒体库「同步 S3」入口只对管理员显示**：接口已移入管理员组，作者点进去只会吃一个 403。
+- 后台首页「立即升级」按钮此前与「检查更新」共用 `Refresh` 图标，改为 `Top`（升级=往上走，检查更新=转圈），三个按钮图标不再撞车。
+- **HTML 编辑界面回到落库标签形态**：右键「编辑 HTML」的代码块与「工具 → 源代码」此前直接暴露画布内部的 `<figure data-fanke-node=…><img><figcaption>` 包装，手写/改 HTML 又长又难读。现在两个界面都只展示与接收 `<img …>` / `<fanke-img …>说明</fanke-img>`，应用时再转回画布形态；「源代码」改由自绘对话框提供（去掉 TinyMCE code 插件），与内联编辑同一口径。开关语义不变：未勾选「替换默认 img 标签」时手打 `<img>` 保持原生、`<fanke-img>` 走插件，勾选后文章页两者都按插件渲染。
+- 删除随旧编辑器预览一起失效的死代码：`useImageViewer.setTagSrc`、`transform` 的 `loose` 参数与 `.iv-editing` 样式。
 - 删除未使用的 `marked` 依赖与 `usePublicApi.themeTokens`（旧主题的 `tokens.css` 由后端在 `site.css`/`admin.css` 接口内部回落，前端从未调用）。
 - README 更正编辑器与主题格式的描述：编辑器是 TinyMCE 可视化 + 右键改单块 HTML（Markdown 只是导入历史内容的后端回落），主题当前格式是 `site.css` / `admin.css`。
+- `doc/plugins.md` 新增「标签回落账本（`fallback`）」一节：触发条件（禁用/卸载/文件损坏）、占位符语法与取值顺序、消毒与所有权规则、文章页与编辑器两个渲染面的差异；并补 image-viewer 1.7 登记的实际模板与「回落态不生效的定制项」。顺手修好该文档里一处被写坏的 ```` ```js ```` 代码围栏。
 - `doc/plugins.md` 补 Go 子进程插件的 `info.json` 字段（`protocol_version` / `trusted_process` / `entrypoint` / `capabilities` / `dependencies`）及其固定取值与构建命令；明确区分扩展包与历史遗留的内联 CSS/JS 片段系统（后者有接口无后台页面）；更新 image-viewer 的前端集成点描述。
+
+### 运维
+
+- **`deploy/nginx.conf.template` 补齐三处实际会踩的配置**（已部署的站点需手动同步，模板改动不会自动生效）：
+  - **文本产物此前完全没压缩**：模板里没有 `gzip on`，`/api/` 的 JSON 与 JS/CSS 全部原样下发。补 5 级 gzip；`gzip_proxied any` 是必需的，nginx 默认不压缩反代响应，少了它 `/api/` 的 JSON 还是不会被压。
+  - **大视频上传在 nginx 就被 413 掉**：`client_max_body_size` 只有 server 级的 `100m`，而后端 `maxUploadRequest` 是 1GiB + 1MiB。`location /api/` 单独放宽到 `1100m`，静态资源仍是 100m（那里不涉及上传）。
+  - **发版后浏览器一直拿旧 `index.html`**：`location /` 此前没有任何 `Cache-Control`，SPA 外壳与预渲染 HTML 会被缓存，引用的还是旧哈希产物。改为 `no-cache`（「用前先问」，不是「不缓存」）；`try_files` 回落 `/index.html` 是内部跳转，会重新匹配到本 location，所以覆盖得到。
+  - 顺带补：nginx 的 `add_header` 继承是**全有或全无**——`/_nuxt/` 一旦有自己的 `add_header`，server 级那三条安全头就一条都不继承，两个 location 都得重写一遍。
+- **新增 `SITE_URL` 环境变量**：`sitemap.xml` 优先用它，不再从请求头取 Host（可被伪造）。不配则维持原行为。
 
 ---
 

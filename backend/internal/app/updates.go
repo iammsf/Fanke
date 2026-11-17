@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -63,24 +64,42 @@ func (a *App) manifestURL() string {
 	return DefaultUpdateManifestURL
 }
 
-// curlToFile 用系统 curl 抓取(支持 --proxy、重定向、超时与体积上限)。
+// maxUpdateRedirects 与 probeHTTPClient 的跳数上限保持一致。
+const maxUpdateRedirects = 4
+
+// curlToFile 用系统 curl 抓取(支持 --proxy、超时与体积上限)。
 // 国内服务器直连 github.com 常超时,curl 可复用系统代理;失败时调用方再回落 Go。
-func curlToFile(ctx context.Context, url, dest string, max int64) error {
-	curl, err := exec.LookPath("curl")
-	if err != nil {
-		return err
-	}
-	args := []string{
-		"-fsSL", "--retry", "2", "--connect-timeout", "20", "--max-time", "900",
-		"--max-filesize", strconv.FormatInt(max+1, 10), "-o", dest,
-	}
-	if updateProxyURL != "" {
-		args = append(args, "--proxy", updateProxyURL)
-	}
-	args = append(args, url)
-	out, err := exec.CommandContext(ctx, curl, args...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("curl: %v %s", err, strings.TrimSpace(string(out)))
+//
+// 这里刻意不用 curl -L:-L 会无条件跟随 3xx,重定向后的地址没人校验,
+// 一条 https 的外部地址就能把请求引到内网(SSRF)。改成手动逐跳:每跳先过
+// validProbeURL,与已经加固过的 Go 探测路径口径一致。
+func curlToFile(ctx context.Context, target, dest string, max int64) error {
+	for hop := 0; ; hop++ {
+		if err := validProbeURL(target); err != nil {
+			return err
+		}
+		code, next, err := curlOnce(ctx, target, dest, max)
+		if err != nil {
+			return err
+		}
+		if code >= 300 && code <= 399 {
+			if next == "" {
+				return fmt.Errorf("curl: %d 重定向但缺少 Location", code)
+			}
+			if hop >= maxUpdateRedirects {
+				return errors.New("重定向次数过多")
+			}
+			resolved, err := absoluteURL(target, next)
+			if err != nil {
+				return err
+			}
+			target = resolved
+			continue
+		}
+		if code != http.StatusOK {
+			return fmt.Errorf("curl: 返回 %d", code)
+		}
+		break
 	}
 	st, err := os.Stat(dest)
 	if err != nil {
@@ -90,6 +109,50 @@ func curlToFile(ctx context.Context, url, dest string, max int64) error {
 		return errors.New("响应超过大小上限")
 	}
 	return nil
+}
+
+// curlOnce 抓一跳:不带 -L,状态码与下一跳地址用 -w 打到 stdout 由调用方裁决。
+func curlOnce(ctx context.Context, target, dest string, max int64) (int, string, error) {
+	curl, err := exec.LookPath("curl")
+	if err != nil {
+		return 0, "", err
+	}
+	args := []string{
+		"-fsS", "--retry", "2", "--connect-timeout", "20", "--max-time", "900",
+		"--max-filesize", strconv.FormatInt(max+1, 10), "-o", dest,
+		"-w", "%{http_code}\n%{redirect_url}",
+	}
+	if updateProxyURL != "" {
+		args = append(args, "--proxy", updateProxyURL)
+	}
+	args = append(args, target)
+	// -w 走 stdout,curl 的错误信息走 stderr,不能混在一起截。
+	out, err := exec.CommandContext(ctx, curl, args...).Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return 0, "", fmt.Errorf("curl: %v %s", err, strings.TrimSpace(string(ee.Stderr)))
+		}
+		return 0, "", fmt.Errorf("curl: %v", err)
+	}
+	// Windows 版 curl 的 -w 输出是 CRLF,两个字段都要各自 TrimSpace,
+	// 否则 Atoi("302\r") 得 0,更新下载会被判成「返回 0」而全线失败。
+	code, next, _ := strings.Cut(string(out), "\n")
+	n, _ := strconv.Atoi(strings.TrimSpace(code))
+	return n, strings.TrimSpace(next), nil
+}
+
+// absoluteURL 把 Location(可能是相对路径)解析成绝对地址。
+func absoluteURL(base, ref string) (string, error) {
+	b, err := url.Parse(base)
+	if err != nil {
+		return "", errors.New("更新地址非法")
+	}
+	r, err := url.Parse(ref)
+	if err != nil {
+		return "", errors.New("重定向地址非法")
+	}
+	return b.ResolveReference(r).String(), nil
 }
 
 // fetchUpdateJSON 优先用 curl(可走代理),失败再回落到 Go 探测客户端。

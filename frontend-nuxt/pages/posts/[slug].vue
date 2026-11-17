@@ -15,8 +15,13 @@ const error = ref<any>(null)
 
 // image-viewer 插件:启用时转换正文中的图片说明标签
 const iv = useImageViewer()
-onMounted(() => iv.load())
-const contentHtml = computed(() => iv.transform(post.value?.content_html || ''))
+// 插件停用/卸载/文件损坏时,正文里它声明过的标签按安装时登记的模板回落渲染
+const fb = useTagFallbacks()
+onMounted(() => {
+  iv.load()
+  fb.load()
+})
+const contentHtml = computed(() => iv.transform(fb.render(post.value?.content_html || '')))
 
 const articleEl = ref<HTMLElement>()
 

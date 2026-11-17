@@ -77,6 +77,9 @@ const insideLink = (html: string, pos: number) => {
 }
 
 export function useImageViewer() {
+  // 认领 fanke-img:插件在线时由本文件渲染,账本回落(useTagFallbacks)不抢先替换;
+  // 插件离线时认领不生效,标签照常按账本模板兜底。
+  useCoreTagRenderers().claim('fanke-img')
   const base = (useRuntimeConfig().public.apiBase || '/api/v1').replace(/\/+$/, '')
   const config = useState<IvConfig | null>('fanke_iv_config', () => null)
   const tried = useState<boolean>('fanke_iv_tried', () => false)
@@ -107,14 +110,13 @@ export function useImageViewer() {
 
   /**
    * 把 html 中的 fanke-img 标签转换为 figure;开启 replace_img 时普通 img 也转换。
-   * loose(编辑器预览): 无 src 的 fanke-img 渲染为可点击骨架,并输出 data-iv-idx。
+   * 插件未启用或拉不到配置时原样返回,不干预文章页。
    */
-  function transform(html: string, loose = false): string {
+  function transform(html: string): string {
     if (!html) return html
-    if (!loose && !config.value) return html // 文章页:插件未启用或无配置时不干预
-    const cfg = config.value || { des_pos: 'middle bottom', des_sty: '', replace_img: false }
+    if (!config.value) return html
+    const cfg = config.value
     const re = new RegExp(RE_ALL.source, 'gi')
-    let pluginIdx = 0
     return html.replace(re, (whole, tagName, fAttrs, capClosed, nAttrs, offset) => {
       const isPlugin = !!tagName
       if (!isPlugin) {
@@ -130,12 +132,10 @@ export function useImageViewer() {
       const sty = mergeDesSty(cfg.des_sty, attr(attrs, 'des_sty'))
       const vert = pos.includes('top') ? 'top' : 'bottom'
       const horiz = pos.includes('left') ? 'left' : pos.includes('right') ? 'right' : 'mid'
-      const cls = `iv-img iv-pos-${vert} iv-align-${horiz}${loose ? ' iv-editing' : ''}`
+      const cls = `iv-img iv-pos-${vert} iv-align-${horiz}`
       const figStyle = cssText(sty.fig)
       const capStyle = cssText(sty.cap)
       const imgStyle = cssText(sty.img)
-      // data-iv-idx 只标在 fanke-img 上,与 setTagSrc 的编号保持一致。
-      const dataAttr = loose && isPlugin ? ` data-iv-idx="${pluginIdx++}"` : ''
       const cap = sty.hidden ? '' : `<figcaption class="iv-cap"${capStyle ? ` style="${capStyle}"` : ''}>${caption}</figcaption>`
       // 原样透传其余属性(含服务端注入的 srcset/sizes/width/height 与 decoding),
       // 只剔除插件自身的 des* 标记与 style(style 由 des_sty 的 r= 重新生成)。
@@ -147,28 +147,9 @@ export function useImageViewer() {
       const visual = src
         ? `<img${kept ? ` ${kept}` : ''}${imgStyle ? ` style="${imgStyle}"` : ''}${hasLoading ? '' : ' loading="lazy"'} />`
         : `<div class="iv-skeleton" title="点击设置图片">🖼 点击设置图片</div>`
-      return `<figure class="${cls}"${dataAttr}${figStyle ? ` style="${figStyle}"` : ''}>${visual}${cap}</figure>`
+      return `<figure class="${cls}"${figStyle ? ` style="${figStyle}"` : ''}>${visual}${cap}</figure>`
     })
   }
 
-  /** 编辑器:把第 idx 个 fanke-img 的 src 写为 url;无 src 则插入,无 des_pos 则按默认配置补齐。 */
-  function setTagSrc(source: string, idx: number, url: string) {
-    const re = /<(fanke-img)\b([^>]*)>([^<]*)<\/fanke-img\s*>/gi
-    let m: RegExpExecArray | null
-    let i = 0
-    while ((m = re.exec(source))) {
-      if (i++ !== idx) continue
-      let attrs = m[2] || ''
-      if (/\bsrc\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/.test(attrs))
-        attrs = attrs.replace(/\bsrc\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/, `src="${url}"`)
-      else attrs = ` src="${url}"${attrs}`
-      if (!/\bdes_pos\s*=/.test(attrs)) {
-        attrs = ` des_pos="${config.value?.des_pos || 'middle bottom'}"${attrs}`
-      }
-      return source.slice(0, m.index) + `<fanke-img${attrs}>${m[3] || ''}</fanke-img>` + source.slice(m.index + m[0].length)
-    }
-    return source
-  }
-
-  return { config, load, transform, setTagSrc }
+  return { config, load, transform }
 }

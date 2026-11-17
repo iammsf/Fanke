@@ -8,6 +8,9 @@ const { api } = useAuth()
 const { push } = useToast()
 const { run } = useBusy() // 与 DB/存储交互期间的全屏加载遮罩(兼防连点)
 const route = useRoute()
+// 全局置顶重排是管理员专属,作者只保留置顶/取消自己的文章。me 由后台布局统一加载,只读不额外发请求。
+const { me } = useAdminMe()
+const isAdmin = computed(() => me.value?.role === 'admin')
 
 const PER = 20
 const state = reactive({
@@ -40,6 +43,7 @@ onMounted(load)
 const search = () => {
   state.q = qInput.value.trim()
   state.page = 1
+  clearSel()
   load()
 }
 
@@ -117,13 +121,15 @@ const toggleSticky = async (p: AdminPost, val: boolean) => {
   }
 }
 
-// HTML5 拖动排序:dragover 时即时换位,松手仅标记脏,点保存落库
+// HTML5 拖动排序:dragover 时即时换位,松手仅标记脏,点保存落库(仅管理员;作者 li 上 draggable=false,处理器再兜底一层)
 const onDragStart = (i: number, e: DragEvent) => {
+  if (!isAdmin.value) return
   dragIdx.value = i
   e.dataTransfer?.setData('text/plain', String(i))
   if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
 }
 const onDragOver = (i: number, e: DragEvent) => {
+  if (!isAdmin.value) return
   e.preventDefault()
   const from = dragIdx.value
   if (from < 0 || from === i) return
@@ -152,6 +158,48 @@ const saveStickyOrder = async () => {
   }
 }
 
+// ---------- 批量操作(范式同 MediaLibrary:选中 Set + 批量栏 + run/api/push) ----------
+const tableRef = ref()
+const selected = ref<Set<number>>(new Set())
+const onSelChange = (rows: AdminPost[]) => {
+  selected.value = new Set(rows.map((r) => r.id))
+}
+const clearSel = () => {
+  tableRef.value?.clearSelection()
+  selected.value.clear()
+}
+
+const bulk = async (action: 'publish' | 'public' | 'sticky' | 'delete', val?: boolean) => {
+  if (!selected.value.size) return
+  const ids = Array.from(selected.value)
+  const label =
+    action === 'publish' ? '发布' : action === 'delete' ? '删除' : action === 'public' ? (val ? '设为公开' : '设为私有') : val ? '置顶' : '取消置顶'
+  if (action === 'delete') {
+    try {
+      await ElMessageBox.confirm(`删除选中的 ${ids.length} 篇文章?此操作不可恢复。`, '批量删除', {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+      })
+    } catch {
+      return
+    }
+  }
+  try {
+    const body: Record<string, unknown> = { action, ids }
+    if (action === 'public') body.is_public = val
+    if (action === 'sticky') body.sticky = val
+    const res = await run(`批量${label}中…`, () => api('/admin/posts/bulk', { method: 'POST', body: JSON.stringify(body) }))
+    push(`已${label} ${res.ok} 项`, true)
+    if (res.failed?.length) (res.failed as string[]).forEach((f) => push(f, false))
+    clearSel()
+    load()
+    if (action === 'sticky' || action === 'delete') loadSticky() // 置顶面板与列表联动
+  } catch (e: any) {
+    push(e.message || `批量${label}失败`, false)
+  }
+}
+
 // 封面缩略图 → Element Plus 图片查看器
 const viewerOpen = ref(false)
 const viewerUrls = ref<string[]>([])
@@ -177,7 +225,7 @@ useHead({ title: '文章 · fanke 后台' })
       <el-select
         v-model="state.status"
         style="width: auto"
-        @change="((state.page = 1), load())"
+        @change="((state.page = 1), clearSel(), load())"
       >
         <el-option value="" label="全部状态" />
         <el-option value="published" label="已发布" />
@@ -191,27 +239,27 @@ useHead({ title: '文章 · fanke 后台' })
     <!-- 置顶排序面板 -->
     <div class="panel card" style="margin: 12px 0; padding: 12px 16px">
       <div style="display: flex; align-items: center; gap: 10px">
-        <strong>置顶文章({{ stickyList.length }})</strong>
-        <span class="muted" style="font-size: 12.5px">拖动调整顺序,首页始终排在最前</span>
+        <strong>{{ isAdmin ? '置顶文章' : '我置顶的文章' }}({{ stickyList.length }})</strong>
+        <span class="muted" style="font-size: 12.5px">{{ isAdmin ? '拖动调整顺序,首页始终排在最前' : '顺序由管理员统一安排' }}</span>
         <div style="margin-left: auto; display: flex; gap: 8px">
-          <el-button v-if="stickyOpen && stickyList.length" size="small" type="primary" :disabled="!stickyDirty || stickySaving" @click="saveStickyOrder">保存顺序</el-button>
+          <el-button v-if="isAdmin && stickyOpen && stickyList.length" size="small" type="primary" :disabled="!stickyDirty || stickySaving" @click="saveStickyOrder">保存顺序</el-button>
           <el-button size="small" @click="stickyOpen = !stickyOpen">{{ stickyOpen ? '收起' : '展开排序' }}</el-button>
         </div>
       </div>
       <div v-if="stickyOpen" style="margin-top: 10px">
-        <p v-if="!stickyList.length" class="muted" style="margin: 4px 0">暂无置顶文章。在下方列表勾选「置顶」即可添加。</p>
+        <p v-if="!stickyList.length" class="muted" style="margin: 4px 0">{{ isAdmin ? '暂无置顶文章。在下方列表勾选「置顶」即可添加。' : '你还没有置顶文章。在下方列表勾选「置顶」即可添加,顺序由管理员统一安排。' }}</p>
         <ul v-else style="list-style: none; margin: 0; padding: 0">
           <li
             v-for="(s, i) in stickyList"
             :key="s.id"
-            draggable="true"
+            :draggable="isAdmin ? 'true' : 'false'"
             @dragstart="onDragStart(i, $event)"
             @dragover="onDragOver(i, $event)"
             @dragend="onDragEnd"
             style="display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line, #333); border-radius: 8px; margin-bottom: 6px; cursor: grab; background: var(--card, transparent)"
-            :style="dragIdx === i ? 'opacity: .5' : ''"
+            :style="[dragIdx === i ? 'opacity: .5' : '', isAdmin ? '' : 'cursor: default']"
           >
-            <span class="muted" style="cursor: grab; user-select: none">⠿</span>
+            <span v-if="isAdmin" class="muted" style="cursor: grab; user-select: none">⠿</span>
             <span class="muted" style="min-width: 20px">{{ i + 1 }}.</span>
             <NuxtLink :to="`/admin/posts/${s.id}`" style="color: var(--text); font-weight: 600">{{ s.title }}</NuxtLink>
             <el-tag v-if="s.status !== 'published'" :type="badgeType('draft')" size="small" effect="light">草稿</el-tag>
@@ -226,7 +274,19 @@ useHead({ title: '文章 · fanke 后台' })
     <ErrorBox v-else-if="error" :error="error" retry @retry="load" />
     <p v-else-if="!data?.items.length" class="muted">没有符合条件的文章。</p>
     <template v-else>
-      <el-table :data="data.items" stripe row-key="id" class="posts-table">
+      <!-- 批量工具栏(全选本页用表头 selection 复选框) -->
+      <div v-if="selected.size" class="media-batch">
+        <span class="muted">已选 {{ selected.size }} 项</span>
+        <el-button size="small" type="primary" @click="bulk('publish')">发布</el-button>
+        <el-button size="small" @click="bulk('public', true)">设为公开</el-button>
+        <el-button size="small" @click="bulk('public', false)">设为私有</el-button>
+        <el-button size="small" @click="bulk('sticky', true)">置顶</el-button>
+        <el-button size="small" @click="bulk('sticky', false)">取消置顶</el-button>
+        <el-button size="small" type="danger" @click="bulk('delete')">删除</el-button>
+        <el-button size="small" text @click="clearSel">取消</el-button>
+      </div>
+      <el-table ref="tableRef" :data="data.items" stripe row-key="id" class="posts-table" @selection-change="onSelChange">
+        <el-table-column type="selection" width="42" />
         <el-table-column label="文章" min-width="300">
           <template #default="{ row: p }">
             <div class="post-cell">
@@ -291,7 +351,7 @@ useHead({ title: '文章 · fanke 后台' })
         :page-size="PER"
         :total="data.total"
         :current-page="state.page"
-        @current-change="(n) => { state.page = n; load() }"
+        @current-change="(n) => { state.page = n; clearSel(); load() }"
         style="margin-top:16px;justify-content:center;display:flex"
       />
     </template>

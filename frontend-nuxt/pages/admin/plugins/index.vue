@@ -28,6 +28,7 @@ const updates = ref<Record<string, ExtensionUpdateInfo | 'error'>>({})
 const load = async () => {
   loading.value = true
   error.value = null
+  selected.value.clear() // 列表重载后旧 slug 可能已不存在,清空选中
   try {
     const res = await api<{ items: Extension[]; hooks: string[] }>(`/admin/extensions`)
     items.value = res.items || []
@@ -208,6 +209,76 @@ const upOf = (slug: string) => {
 }
 const upVersion = (slug: string) => upOf(slug)?.version || ''
 
+// ---------- 批量操作(范式同 MediaLibrary,但键是 slug 字符串数组) ----------
+const selected = ref<Set<string>>(new Set())
+const toggleSel = (slug: string) => {
+  if (selected.value.has(slug)) selected.value.delete(slug)
+  else selected.value.add(slug)
+}
+const allChecked = computed(() => items.value.length > 0 && items.value.every((i) => selected.value.has(i.slug)))
+const toggleSelAll = () => {
+  const all = items.value.every((i) => selected.value.has(i.slug))
+  items.value.forEach((i) => {
+    if (all) selected.value.delete(i.slug)
+    else selected.value.add(i.slug)
+  })
+}
+
+const bulkEnabled = async (enabled: boolean) => {
+  if (!selected.value.size) return
+  const slugs = Array.from(selected.value)
+  // 与单个启用一致:含 s3-storage 时先确认可信程序
+  if (enabled && slugs.includes('s3-storage')) {
+    try {
+      await ElMessageBox.confirm('选中项包含「S3 对象存储」？它会以博客服务账号运行，请仅启用你信任的插件。', '启用可信程序', {
+        type: 'warning',
+        confirmButtonText: '启用',
+        cancelButtonText: '取消',
+      })
+    } catch {
+      return
+    }
+  }
+  try {
+    const res = await run(enabled ? '批量启用中…' : '批量停用中…', () =>
+      api('/admin/extensions/bulk', { method: 'POST', body: JSON.stringify({ action: 'enabled', slugs, enabled }) }),
+    )
+    push(`已${enabled ? '启用' : '停用'} ${res.ok} 项`, true)
+    if (res.failed?.length) (res.failed as string[]).forEach((f) => push(f, false))
+    selected.value.clear()
+    await load()
+    await refreshPublic()
+    await refreshContributions()
+  } catch (e: any) {
+    push(e.message || `批量${enabled ? '启用' : '停用'}失败`, false)
+  }
+}
+
+const bulkUninstall = async () => {
+  if (!selected.value.size) return
+  const slugs = Array.from(selected.value)
+  try {
+    await ElMessageBox.confirm(
+      `卸载选中的 ${slugs.length} 个插件？插件目录与 extensions_data 记录将被删除；插件自己创建的数据表保留。卸载后正文里的插件标签会按安装时登记的回落模板继续渲染，不会丢内容。`,
+      '批量卸载',
+      { type: 'warning', confirmButtonText: '卸载', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  try {
+    const res = await run('批量卸载中…', () => api('/admin/extensions/bulk', { method: 'POST', body: JSON.stringify({ action: 'uninstall', slugs }) }))
+    push(`已卸载 ${res.ok} 项`, true)
+    if (res.failed?.length) (res.failed as string[]).forEach((f) => push(f, false))
+    selected.value.clear()
+    await load()
+    await refreshPublic()
+    await refreshContributions()
+  } catch (e: any) {
+    push(e.message || '批量卸载失败', false)
+  }
+}
+
 useHead({ title: '插件 · fanke 后台' })
 </script>
 
@@ -233,19 +304,35 @@ useHead({ title: '插件 · fanke 后台' })
 
     <section v-else class="panel card">
       <p v-if="!items.length" class="muted">尚未安装任何插件。</p>
-      <table v-else class="ext-table">
-        <thead>
-          <tr>
-            <th style="width: 36px"></th>
-            <th>插件</th>
-            <th style="width: 160px">版本</th>
-            <th style="width: 100px">状态</th>
-            <th style="width: 340px">操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="e in items" :key="e.slug">
-            <td>
+      <template v-else>
+        <!-- 批量工具栏 -->
+        <div class="media-batch">
+          <el-checkbox class="batch-label" :model-value="allChecked" @change="toggleSelAll">全选</el-checkbox>
+          <span v-if="selected.size" class="muted">已选 {{ selected.size }} 项</span>
+          <template v-if="selected.size">
+            <el-button size="small" @click="bulkEnabled(true)">启用</el-button>
+            <el-button size="small" @click="bulkEnabled(false)">停用</el-button>
+            <el-button size="small" type="danger" @click="bulkUninstall">卸载</el-button>
+            <el-button size="small" text @click="selected.clear()">取消</el-button>
+          </template>
+        </div>
+        <table class="ext-table">
+          <thead>
+            <tr>
+              <th style="width: 36px"></th>
+              <th style="width: 36px"></th>
+              <th>插件</th>
+              <th style="width: 160px">版本</th>
+              <th style="width: 100px">状态</th>
+              <th style="width: 340px">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="e in items" :key="e.slug">
+              <td>
+                <el-checkbox :model-value="selected.has(e.slug)" @change="toggleSel(e.slug)" />
+              </td>
+              <td>
               <img
                 v-if="e.favico"
                 :src="`${apiBase}/ext/${e.slug}/assets/${e.favico}`"
@@ -301,6 +388,7 @@ useHead({ title: '插件 · fanke 后台' })
           </tr>
         </tbody>
       </table>
+      </template>
     </section>
 
     <section class="panel card">

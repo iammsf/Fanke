@@ -8,15 +8,27 @@ server {
     root __ROOT__;
     index index.html;
 
-    # 上传上限(与后端保持一致)
+    # 静态资源不涉及上传;真正的上传入口是 /api/,上限在那里单独放宽。
     client_max_body_size 100m;
 
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options SAMEORIGIN always;
     add_header Referrer-Policy strict-origin-when-cross-origin always;
 
+    # 文本产物按 5 级压缩。gzip_proxied any 是必需的:默认 nginx 不压缩反代响应,
+    # /api/ 的 JSON 会原样下发。text/html 恒被压缩,不能写进 gzip_types(会告警重复)。
+    gzip on;
+    gzip_vary on;
+    gzip_comp_level 5;
+    gzip_min_length 1024;
+    gzip_proxied any;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml application/xml text/xml;
+
     # 后端 API:同域反代,保留原始路径
     location /api/ {
+        # 后端 maxUploadRequest = 1GiB + 1MiB(handlers_media.go),视频上传走这里;
+        # 沿用 server 级的 100m 会让大视频在 nginx 就被 413 掉,根本到不了后端。
+        client_max_body_size 1100m;
         proxy_pass http://127.0.0.1:__PORT__;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -58,10 +70,21 @@ server {
     location /_nuxt/ {
         try_files $uri =404;
         expires 30d;
+        # 本 location 一旦有自己的 add_header,就不会再继承 server 级的那三条,必须重写一遍。
         add_header Cache-Control "public, max-age=2592000, immutable";
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-Frame-Options SAMEORIGIN always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
     }
 
     location / {
         try_files $uri $uri/ /index.html;
+        # SPA 外壳与预渲染 HTML 必须每次回源校验(no-cache 是"用前先问",不是"不缓存"),
+        # 否则发版后浏览器会一直拿旧 index.html,引用的还是旧哈希产物。
+        # try_files 回落到 /index.html 是内部跳转,会重新匹配到本 location,所以这里覆盖得到。
+        add_header Cache-Control "no-cache" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-Frame-Options SAMEORIGIN always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
     }
 }

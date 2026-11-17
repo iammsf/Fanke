@@ -146,3 +146,31 @@ func (db *DB) RevokeRefreshToken(ctx context.Context, jti string) error {
 	_, err := db.Exec(ctx, `UPDATE refresh_tokens SET revoked=TRUE WHERE jti=$1`, jti)
 	return err
 }
+
+// UserDeleteBlockers 批量删除用户前预检:posts.author_id 与 comments.user_id 都是
+// NO ACTION 外键,直接删会 500。这里一次查清哪些 id 被引用,翻译成可读原因。
+func (db *DB) UserDeleteBlockers(ctx context.Context, ids []int64) (map[int64]string, error) {
+	rows, err := db.Query(ctx, `SELECT id,
+		EXISTS(SELECT 1 FROM posts WHERE author_id=users.id),
+		EXISTS(SELECT 1 FROM comments WHERE user_id=users.id)
+		FROM users WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]string{}
+	for rows.Next() {
+		var id int64
+		var hasPosts, hasComments bool
+		if err := rows.Scan(&id, &hasPosts, &hasComments); err != nil {
+			return nil, err
+		}
+		switch {
+		case hasPosts:
+			out[id] = "仍有文章,请先转移作者"
+		case hasComments:
+			out[id] = "仍有评论,无法删除"
+		}
+	}
+	return out, rows.Err()
+}

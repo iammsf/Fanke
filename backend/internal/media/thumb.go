@@ -128,7 +128,13 @@ func (t *Thumbnailer) GetWithQuality(ctx context.Context, srcID string, w, quali
 	t.mu.Lock()
 	if ch, ok := t.inflight[key]; ok {
 		t.mu.Unlock()
-		<-ch // 等领头请求写完
+		// 等领头请求写完,但必须带上 ctx:领头的那个可能卡在 image.process 子进程上,
+		// 裸等会把同 key 的后续请求全部无限期挂住,客户端早就断开了也放不掉。
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
 		if fileReady(final) {
 			return final, nil
 		}

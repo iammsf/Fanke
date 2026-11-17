@@ -173,3 +173,60 @@ func (db *DB) MediaURLRefPosts(ctx context.Context, url string) (int, error) {
 		WHERE position($1 in content_md)>0 OR position($1 in content_html)>0`, url).Scan(&n)
 	return n, err
 }
+
+// MediaURLRefPostsBatch 一次查出每个 URL 分别被多少篇文章正文引用。
+// 单条版 MediaURLRefPosts 用的是 position() 子串匹配,注定全表扫;同步对账最多列 5000 个
+// 桶内孤儿,逐条查等于把 posts 全表扫 5000 遍。这里只扫一遍表,把匹配交给 unnest 的笛卡尔积。
+func (db *DB) MediaURLRefPostsBatch(ctx context.Context, urls []string) (map[string]int, error) {
+	out := map[string]int{}
+	if len(urls) == 0 {
+		return out, nil
+	}
+	rows, err := db.Query(ctx, `SELECT u.url, count(DISTINCT p.id)
+		FROM unnest($1::text[]) AS u(url) CROSS JOIN posts p
+		WHERE position(u.url in p.content_md) > 0 OR position(u.url in p.content_html) > 0
+		GROUP BY u.url`, urls)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var u string
+		var n int
+		if err := rows.Scan(&u, &n); err != nil {
+			return nil, err
+		}
+		out[u] = n
+	}
+	return out, rows.Err()
+}
+
+// MediaRefPostsBatch 是 MediaRefPosts 的批量版:ids 与 urls 必须一一对应(同下标同一条媒体)。
+func (db *DB) MediaRefPostsBatch(ctx context.Context, ids []int64, urls []string) (map[int64]int, error) {
+	out := map[int64]int{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	if len(ids) != len(urls) {
+		return nil, errors.New("ids 与 urls 长度不一致")
+	}
+	rows, err := db.Query(ctx, `SELECT m.id, count(DISTINCT p.id)
+		FROM (SELECT unnest($1::bigint[]) AS id, unnest($2::text[]) AS url) m CROSS JOIN posts p
+		WHERE p.cover_media_id = m.id
+		   OR position(m.url in p.content_md) > 0
+		   OR position(m.url in p.content_html) > 0
+		GROUP BY m.id`, ids, urls)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}

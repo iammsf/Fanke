@@ -93,7 +93,11 @@ func (a *App) PutS3Config(w http.ResponseWriter, r *http.Request) {
 	}
 	a.s3Mu.Lock()
 	a.s3Hash = ""
+	// 旧凭据构建的客户端不会再被任何 hash 命中,留着只是泄漏;一起丢掉。
+	a.s3Stores, a.s3Errors = nil, nil
 	a.s3Mu.Unlock()
+	// 公开配置快照与 s3Settings 缓存都挂在这个换代号上,不清会让新配置最多 30s 不生效。
+	a.publicCache.clear()
 	writeJSON(w, http.StatusOK, maskSettings(in))
 }
 

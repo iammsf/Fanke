@@ -2,11 +2,14 @@
   "name": "更好用的 fanke-img 标签",
   "slug": "image-viewer",
   "author": "電腦玩家Stan",
-  "version": "1.6",
+  "version": "1.7",
   "date": "2026.11.17",
-  "description": "用独立的 <fanke-img> 标签扩展插图与展示能力，和原生 <img> 互不干扰；支持图片说明、位置与样式定制、宽度与圆角设置，可选替换普通 <img>，并整合上传、媒体库选择和外链插图。", 
+  "description": "用独立的 <fanke-img> 标签扩展插图与展示能力，和原生 <img> 互不干扰；支持图片说明、位置与样式定制、宽度与圆角设置，可选替换普通 <img>，并整合上传、媒体库选择和外链插图。插件被禁用、卸载或文件损坏时，正文里的 <fanke-img> 会按登记的回落模板继续渲染成图加图注，不会变成裸标签。",
   "url": "https://boke.masi.fan",
   "update_url": "https://raw.githubusercontent.com/iammsf/fanke/main/updates.json",
   "favico": "favico.svg",
-  "request": ["store.ensure_table", "store.save", "store.get", "store.get_batch", "beforePostCreate", "beforePostUpdate", "editor.register"]
+  "request": ["store.ensure_table", "store.save", "store.get", "store.get_batch", "beforePostCreate", "beforePostUpdate", "editor.register"],
+  "fallback": {
+    "fanke-img": "<figure class=\"fanke-fallback\"><img src=\"{{src}}\" alt=\"{{caption}}\" loading=\"lazy\"><figcaption>{{caption}}</figcaption></figure>"
+  }
 }

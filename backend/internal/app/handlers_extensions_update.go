@@ -174,6 +174,11 @@ func (a *App) installExtensionUpdate(id int64, slug string, data []byte) error {
 			return errors.New("server manifest invalid: " + err.Error())
 		}
 	}
+	// 回落账本在换目录前先校验:模板非法就不动现有安装。
+	if err := validateTagFallbacks(context.Background(), a.DB, slug, info.Fallback); err != nil {
+		_ = os.RemoveAll(stage)
+		return errors.New("info.json 的 fallback 非法: " + err.Error())
+	}
 	_ = os.RemoveAll(backup)
 	if err := os.Rename(dir, backup); err != nil {
 		_ = os.RemoveAll(stage)
@@ -193,6 +198,9 @@ func (a *App) installExtensionUpdate(id int64, slug string, data []byte) error {
 	}
 	if err := a.DB.UpdateExtensionMeta(context.Background(), id, e); err != nil {
 		return errors.New("插件文件已更新,但写数据库失败: " + err.Error())
+	}
+	if err := registerTagFallbacks(context.Background(), a.DB, slug, info.Version, info.Fallback); err != nil {
+		return errors.New("插件文件已更新,但回落账本写库失败: " + err.Error())
 	}
 	a.publicCache.clear()
 	return nil

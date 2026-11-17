@@ -151,6 +151,32 @@ func (db *DB) PutSetting(ctx context.Context, key string, value any) error {
 	return err
 }
 
+// MutateSettingLocked 在单个事务里对某条 setting 做「确保行存在 → 加行锁 → 读 → 改 → 写」。
+// 并发调用会串行执行而不是各自读到旧值再互相覆盖——标签回落账本就是多个插件安装时
+// 往同一条记录里登记的,没有行锁的话后写的会把先写的整条冲掉。
+// fn 收到当前值(行刚被本函数创建时为 {}),返回要写回的新值。
+func (db *DB) MutateSettingLocked(ctx context.Context, key string, fn func(json.RawMessage) (any, error)) error {
+	return db.inTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `INSERT INTO settings(key,value) VALUES($1,'{}'::jsonb) ON CONFLICT (key) DO NOTHING`, key); err != nil {
+			return err
+		}
+		var raw []byte
+		if err := tx.QueryRow(ctx, `SELECT value FROM settings WHERE key=$1 FOR UPDATE`, key).Scan(&raw); err != nil {
+			return err
+		}
+		out, err := fn(raw)
+		if err != nil {
+			return err
+		}
+		b, err := json.Marshal(out)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `UPDATE settings SET value=$2 WHERE key=$1`, key, b)
+		return err
+	})
+}
+
 func (db *DB) AllSettings(ctx context.Context) (map[string]json.RawMessage, error) {
 	rows, err := db.Query(ctx, `SELECT key, value FROM settings`)
 	if err != nil {

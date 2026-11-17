@@ -82,6 +82,50 @@ const badgeText = (s: string) => (s === 'approved' ? '已通过' : s === 'spam' 
 // AppBadge → el-tag 类型映射
 const badgeType = (k: string) => (({ pub: 'success', draft: 'primary', spam: 'danger', wait: 'warning', st: 'info' }) as Record<string, string>)[k] || 'info'
 
+// ---------- 批量操作(范式同 MediaLibrary:选中 Set + 全选本页 + run/api/push) ----------
+const selected = ref<Set<number>>(new Set())
+const toggle = (id: number) => {
+  if (selected.value.has(id)) selected.value.delete(id)
+  else selected.value.add(id)
+}
+const allChecked = computed(() => (data.value?.items.length ?? 0) > 0 && data.value!.items.every((i) => selected.value.has(i.id)))
+const toggleAll = () => {
+  const ids = data.value?.items.map((i) => i.id) ?? []
+  const all = ids.every((id) => selected.value.has(id))
+  ids.forEach((id) => {
+    if (all) selected.value.delete(id)
+    else selected.value.add(id)
+  })
+}
+
+const bulk = async (action: 'status' | 'delete', s?: 'approved' | 'pending' | 'spam') => {
+  if (!selected.value.size) return
+  const ids = Array.from(selected.value)
+  const label = action === 'delete' ? '删除' : s === 'approved' ? '通过' : s === 'pending' ? '转待审' : '标记垃圾'
+  if (action === 'delete') {
+    try {
+      await ElMessageBox.confirm(`删除选中的 ${ids.length} 条评论?此操作不可恢复。`, '批量删除', {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+      })
+    } catch {
+      return
+    }
+  }
+  try {
+    const body: Record<string, unknown> = { action, ids }
+    if (action === 'status') body.status = s
+    const res = await run(`批量${label}中…`, () => api('/admin/comments/bulk', { method: 'POST', body: JSON.stringify(body) }))
+    push(`已${label} ${res.ok} 项`, true)
+    if (res.failed?.length) (res.failed as string[]).forEach((f) => push(f, false))
+    selected.value.clear()
+    load()
+  } catch (e: any) {
+    push(e.message || `批量${label}失败`, false)
+  }
+}
+
 useHead({ title: '评论 · fanke 后台' })
 </script>
 
@@ -95,7 +139,7 @@ useHead({ title: '评论 · fanke 后台' })
           :key="t.value"
           size="small"
           :type="status === t.value ? 'primary' : 'default'"
-          @click="((status = t.value), (page = 1), load())"
+          @click="((status = t.value), (page = 1), selected.clear(), load())"
           >{{ t.label }}</el-button
         >
       </div>
@@ -105,8 +149,21 @@ useHead({ title: '评论 · fanke 后台' })
     <ErrorBox v-else-if="error" :error="error.status === 403 ? { message: '需要管理员角色才能查看评论' } : error" :retry="error.status !== 403" @retry="load" />
     <p v-else-if="!data?.items.length" class="muted">这个分类下暂时没有评论。</p>
     <template v-else>
+      <!-- 批量工具栏 -->
+      <div class="media-batch">
+        <el-checkbox class="batch-label" :model-value="allChecked" @change="toggleAll">全选(本页)</el-checkbox>
+        <span v-if="selected.size" class="muted">已选 {{ selected.size }} 项</span>
+        <template v-if="selected.size">
+          <el-button size="small" type="primary" @click="bulk('status', 'approved')">通过</el-button>
+          <el-button size="small" @click="bulk('status', 'pending')">待审</el-button>
+          <el-button size="small" @click="bulk('status', 'spam')">标垃圾</el-button>
+          <el-button size="small" type="danger" @click="bulk('delete')">删除</el-button>
+          <el-button size="small" text @click="selected.clear()">取消</el-button>
+        </template>
+      </div>
       <div v-for="c in data.items" :key="c.id" class="panel card">
         <div class="toolbar" style="margin-bottom: 6px">
+          <el-checkbox :model-value="selected.has(c.id)" @change="toggle(c.id)" style="margin-right: 2px" />
           <strong>{{ c.author_name }}</strong>
           <el-tag :type="badgeType(badgeKind(c.status))" size="small" effect="light">{{ badgeText(c.status) }}</el-tag>
           <span class="muted">{{ fmtDateTime(c.created_at) }}</span>
@@ -128,7 +185,7 @@ useHead({ title: '评论 · fanke 后台' })
         :page-size="PER"
         :total="data.total"
         :current-page="page"
-        @current-change="(n) => { page = n; load() }"
+        @current-change="(n) => { page = n; selected.clear(); load() }"
         style="margin-top:16px;justify-content:center;display:flex"
       />
     </template>

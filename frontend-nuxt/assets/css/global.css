@@ -696,7 +696,7 @@ textarea.input {
 .iv-img.iv-align-right .iv-cap {
   text-align: right;
 }
-/* 编辑器预览:未设置 src 的骨架块 */
+/* 未设置 src 的占位块 */
 .iv-skeleton {
   display: flex;
   align-items: center;
@@ -714,12 +714,28 @@ textarea.input {
   border-color: var(--primary);
   color: var(--primary);
 }
-.iv-editing {
-  cursor: pointer;
+
+/* ========== 插件标签回落:插件停用/卸载/文件损坏时按安装时登记的模板渲染 ==========
+   模板由插件在 info.json 的 fallback 里声明(见 doc/plugins.md),这里只给中性排版,
+   保证任何插件的回落结果都不会撑破正文。 */
+.fanke-fallback {
+  margin: 18px 0;
+  text-align: center;
 }
-.iv-editing:hover img {
-  outline: 2px dashed var(--primary);
-  outline-offset: 2px;
+.fanke-fallback img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+.fanke-fallback figcaption {
+  margin-top: 6px;
+  font-size: 13.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+/* 没有图注时不留空白行 */
+.fanke-fallback figcaption:empty {
+  display: none;
 }
 
 /* ========== 明暗切换图标 ========== */

@@ -15,6 +15,7 @@ type PostQuery struct {
 	Tag        string
 	Category   string
 	Q          string
+	AuthorID   int64 // 仅该作者的文章(后台 author 视角);0 表示不过滤
 	Page       int
 	Per        int
 	// 首页排序:仅 Q=="" 且无 tag/category 过滤时生效(搜索/归档页保持相关度/默认序)
@@ -51,6 +52,9 @@ func (db *DB) ListPosts(ctx context.Context, q PostQuery) ([]Post, int, error) {
 	}
 	if q.PublicOnly {
 		where = append(where, `p.is_public`)
+	}
+	if q.AuthorID != 0 {
+		add(`p.author_id=$?`, q.AuthorID)
 	}
 	if q.Tag != "" {
 		add(`t1.slug=$? AND t1.type='tag'`, q.Tag)
@@ -258,6 +262,41 @@ func (db *DB) SetPostSticky(ctx context.Context, id int64, on bool) error {
 	return err
 }
 
+// BulkPublishPosts 批量发布,单条 SQL 完成;返回实际更新行数。
+func (db *DB) BulkPublishPosts(ctx context.Context, ids []int64) (int64, error) {
+	tag, err := db.Exec(ctx, `UPDATE posts SET status='published', published_at=COALESCE(published_at, now()), updated_at=now() WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// BulkSetPostsPublic 批量切换公开性;返回实际更新行数。
+func (db *DB) BulkSetPostsPublic(ctx context.Context, ids []int64, public bool) (int64, error) {
+	tag, err := db.Exec(ctx, `UPDATE posts SET is_public=$2, updated_at=now() WHERE id = ANY($1)`, ids, public)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// BulkSetPostsSticky 批量置顶/取消置顶。置顶时接着现有最大权重按传入顺序往后排,
+// 与单条 SetPostSticky 的「排到队尾」语义一致。
+func (db *DB) BulkSetPostsSticky(ctx context.Context, ids []int64, on bool) (int64, error) {
+	q := `WITH ord AS (SELECT id, ord::int AS rn FROM unnest($1::bigint[]) WITH ORDINALITY AS t(id, ord))
+		UPDATE posts p SET sticky = b.base + o.rn, updated_at = now()
+		FROM ord o CROSS JOIN (SELECT COALESCE(MAX(sticky),0) AS base FROM posts) b
+		WHERE p.id = o.id`
+	if !on {
+		q = `UPDATE posts SET sticky=0, updated_at=now() WHERE id = ANY($1) AND sticky>0`
+	}
+	tag, err := db.Exec(ctx, q, ids)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // SetStickyOrder 按传入 id 顺序重写置顶权重(1..N);未包含的置顶文章取消置顶。
 func (db *DB) SetStickyOrder(ctx context.Context, ids []int64) error {
 	return db.inTx(ctx, func(tx pgx.Tx) error {
@@ -273,10 +312,16 @@ func (db *DB) SetStickyOrder(ctx context.Context, ids []int64) error {
 	})
 }
 
-// ListStickyPosts 全部置顶文章(sticky 升序),管理端拖动排序用。
-func (db *DB) ListStickyPosts(ctx context.Context) ([]Post, error) {
-	rows, err := db.Query(ctx, `SELECT `+postCols+` FROM posts p JOIN users u ON u.id=p.author_id
-		WHERE p.sticky>0 ORDER BY p.sticky ASC`)
+// ListStickyPosts 置顶文章(sticky 升序),管理端拖动排序用;authorID 非 0 时仅返回该作者自己的。
+func (db *DB) ListStickyPosts(ctx context.Context, authorID int64) ([]Post, error) {
+	q := `SELECT ` + postCols + ` FROM posts p JOIN users u ON u.id=p.author_id WHERE p.sticky>0`
+	var args []any
+	if authorID > 0 {
+		q += ` AND p.author_id=$1`
+		args = append(args, authorID)
+	}
+	q += ` ORDER BY p.sticky ASC`
+	rows, err := db.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

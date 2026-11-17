@@ -2,7 +2,7 @@
 // 仪表盘:管理员看站点概览与快捷入口;非管理员只看自己的资料与密码
 definePageMeta({ layout: 'admin', middleware: 'auth' })
 import type { AdminPost, CoreUpdateInfo, Page } from '~/types'
-import { DocumentAdd, Picture, ChatDotRound, Setting, Refresh, Link } from '@element-plus/icons-vue'
+import { DocumentAdd, Picture, ChatDotRound, Setting, Refresh, Link, Top } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 
 const { api, logout } = useAuth()
@@ -276,7 +276,7 @@ useHead({ title: '仪表盘 · fanke 后台' })
             <el-button
               v-if="coreUpdate?.has_update"
               type="primary"
-              :icon="Refresh"
+              :icon="Top"
               :loading="applying"
               @click="applyUpdate"
             >立即升级</el-button>

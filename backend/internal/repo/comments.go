@@ -109,3 +109,21 @@ func (db *DB) CommentCountForPost(ctx context.Context, postID int64) (int, error
 	}
 	return n, err
 }
+
+// BulkSetCommentStatus 批量改评论状态,单条 SQL 完成;返回实际更新行数。
+func (db *DB) BulkSetCommentStatus(ctx context.Context, ids []int64, status string) (int64, error) {
+	tag, err := db.Exec(ctx, `UPDATE comments SET status=$2 WHERE id = ANY($1)`, ids, status)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// BulkDeleteComments 批量删除评论;子评论由 comments.parent_id 自引用 CASCADE 一并清理。
+func (db *DB) BulkDeleteComments(ctx context.Context, ids []int64) (int64, error) {
+	tag, err := db.Exec(ctx, `DELETE FROM comments WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}

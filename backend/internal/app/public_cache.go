@@ -47,6 +47,14 @@ func (c *publicCache) clear() {
 	c.flights = nil
 }
 
+// gen 返回当前换代号。挂在它上面的旁路缓存(如 s3Settings)不需要各自的失效路径:
+// 任何一处 clear() 都会让它们一起失效。
+func (c *publicCache) gen() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.generation
+}
+
 func (c *publicCache) get(ctx context.Context, key publicCacheKey, load func() ([]byte, error)) ([]byte, error) {
 	for {
 		if err := ctx.Err(); err != nil {

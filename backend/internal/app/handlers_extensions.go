@@ -19,9 +19,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"fanke/backend/internal/pluginrpc"
 	"fanke/backend/internal/repo"
+	"github.com/go-chi/chi/v5"
 )
 
 const (
@@ -34,17 +34,18 @@ const (
 
 // extInfo 插件包 info.json 结构。request 字段声明所需 hook。
 type extInfo struct {
-	Name        string         `json:"name"`
-	Slug        string         `json:"slug"` // 可选:显式指定 slug(中文名必须);缺省由 name 派生
-	Author      string         `json:"author"`
-	Version     string         `json:"version"`
-	Date        string         `json:"date"`
-	Request     []string       `json:"request"`
-	Description string         `json:"description"`
-	URL         string         `json:"url"`
-	UpdateURL   string         `json:"update_url"`
-	Favico      string         `json:"favico"`
-	Extra       map[string]any `json:"-"` // 其余自定义字段原样保留(详情页展示用)
+	Name        string   `json:"name"`
+	Slug        string   `json:"slug"` // 可选:显式指定 slug(中文名必须);缺省由 name 派生
+	Author      string   `json:"author"`
+	Version     string   `json:"version"`
+	Date        string   `json:"date"`
+	Request     []string `json:"request"`
+	Description string   `json:"description"`
+	URL         string   `json:"url"`
+	UpdateURL   string   `json:"update_url"`
+	Favico      string   `json:"favico"`
+	// Fallback 声明本插件每个正文标签的回落模板(标签 → HTML),插件不在线时由核心按它渲染。
+	Fallback map[string]string `json:"fallback"`
 }
 
 var extExplicitSlugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
@@ -219,7 +220,7 @@ func (a *App) UploadExtension(w http.ResponseWriter, r *http.Request) {
 	defer f.Close()
 	data, err := io.ReadAll(io.LimitReader(f, maxExtPackage+1))
 	if err != nil || len(data) > maxExtPackage {
-		a.fail(w, http.StatusRequestEntityTooLarge, "包体过大(>10MB)")
+		a.fail(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("包体过大(>%dMB)", maxExtPackage>>20))
 		return
 	}
 	ext := strings.ToLower(filepath.Ext(hdr.Filename))
@@ -323,6 +324,11 @@ func (a *App) UploadExtension(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, http.StatusConflict, "同名插件已存在,请先卸载旧版本")
 		return
 	}
+	// 回落账本先校验后落库:模板非法或标签所有权冲突要在动文件系统之前拦掉。
+	if err := validateTagFallbacks(r.Context(), a.DB, slug, info.Fallback); err != nil {
+		a.fail(w, http.StatusBadRequest, "info.json 的 fallback 非法: "+err.Error())
+		return
+	}
 
 	if err := a.ensureExtRoot(); err != nil {
 		a.failInternal(w, r, "prepare extensions dir", err)
@@ -375,6 +381,12 @@ func (a *App) UploadExtension(w http.ResponseWriter, r *http.Request) {
 		a.failInternal(w, r, "create extension", err)
 		return
 	}
+	if err := registerTagFallbacks(r.Context(), a.DB, slug, info.Version, info.Fallback); err != nil {
+		_ = a.DB.DeleteExtension(r.Context(), id)
+		_ = os.RemoveAll(dir)
+		a.failInternal(w, r, "save tag fallbacks", err)
+		return
+	}
 	a.publicCache.clear()
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "slug": slug, "initialized": false})
 }
@@ -416,17 +428,12 @@ func (a *App) SetExtensionEnabled(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, http.StatusBadRequest, "bad payload")
 		return
 	}
-	if req.Enabled {
-		if !e.Initialized {
-			a.fail(w, http.StatusConflict, "插件尚未完成初始化,请先在详情页执行 init")
+	if err := a.setExtensionEnabled(r.Context(), e, req.Enabled); err != nil {
+		var rejected rejectedError
+		if errors.As(err, &rejected) {
+			a.fail(w, http.StatusConflict, rejected.Error())
 			return
 		}
-		if err := pluginrpc.ValidateManifest(a.extDir(e.Slug), e.Slug, true); err != nil {
-			a.fail(w, http.StatusConflict, "可信服务端插件未通过启用检查: "+err.Error())
-			return
-		}
-	}
-	if err := a.DB.SetExtensionEnabled(r.Context(), e.ID, req.Enabled); err != nil {
 		a.failInternal(w, r, "set extension enabled", err)
 		return
 	}
@@ -458,19 +465,16 @@ func (a *App) DeleteExtension(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, http.StatusNotFound, "插件不存在")
 		return
 	}
-	if blocked, err := a.DB.HasS3MediaReferences(r.Context()); err != nil {
-		a.failInternal(w, r, "check media references", err)
-		return
-	} else if blocked && e.Slug == "s3-storage" {
-		a.fail(w, http.StatusConflict, "S3 媒体或派生图仍有引用，不能删除")
-		return
-	}
-	if err := a.DB.DeleteExtension(r.Context(), e.ID); err != nil {
+	if err := a.uninstallExtension(r.Context(), e); err != nil {
+		var rejected rejectedError
+		if errors.As(err, &rejected) {
+			a.fail(w, http.StatusConflict, rejected.Error())
+			return
+		}
 		a.failInternal(w, r, "delete extension", err)
 		return
 	}
 	a.publicCache.clear()
-	_ = os.RemoveAll(a.extDir(e.Slug))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -667,8 +671,22 @@ func (a *App) serveExtensionFile(w http.ResponseWriter, r *http.Request, rest st
 		a.fail(w, http.StatusNotFound, "资源不存在")
 		return
 	}
-	w.Header().Set("Cache-Control", "public, max-age=3600")
+	// 插件更新后必须立刻生效:代码文件只允许带 Last-Modified 回源校验(no-cache → 304),
+	// 否则浏览器会拿旧 editor.js 继续跑,后台看着已升级、编辑器行为却还是老版本。
+	if isExtensionCodeFile(rest) {
+		w.Header().Set("Cache-Control", "no-cache")
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+	}
 	http.ServeFile(w, r, p)
+}
+
+func isExtensionCodeFile(name string) bool {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".js", ".mjs", ".cjs", ".ts", ".css", ".html", ".json", ".map":
+		return true
+	}
+	return false
 }
 
 // ServeExtensionPageFile 让插件 index.html 里的相对 URL(init.js、style.css 等)可解析。
@@ -727,19 +745,32 @@ func (a *App) invokeExtensionHook(w http.ResponseWriter, r *http.Request, isPubl
 
 // ListEnabledExtensions 公开:返回启用中的插件 slug 列表,以及声明了编辑器能力的插件。
 // 编辑器能力必须在 info.json 的 request 中声明 editor.register,未声明的插件不会被后台编辑器加载。
+// enabled 的口径是「启用 + 已初始化 + 文件完好」:文件损坏的插件对渲染端等同不在线,
+// 前端据此自动走回落账本,而不是加载一个 404 的 editor.js 或等一个永远超时的 hook。
 func (a *App) ListEnabledExtensions(w http.ResponseWriter, r *http.Request) {
+	type publicFallback struct {
+		Tag  string `json:"tag"`
+		Slug string `json:"slug"`
+		HTML string `json:"html"`
+	}
 	type publicExt struct {
-		Enabled []string `json:"enabled"`
-		Editors []string `json:"editors"`
+		Enabled   []string         `json:"enabled"`
+		Editors   []string         `json:"editors"`
+		Unhealthy []string         `json:"unhealthy"`
+		Fallbacks []publicFallback `json:"fallbacks"`
 	}
 	out, err := cachedPublicJSON(r.Context(), &a.publicCache, cacheEnabledExtensions, func() (publicExt, error) {
-		res := publicExt{Enabled: []string{}, Editors: []string{}}
+		res := publicExt{Enabled: []string{}, Editors: []string{}, Unhealthy: []string{}, Fallbacks: []publicFallback{}}
 		items, err := a.DB.ListExtensions(r.Context())
 		if err != nil {
 			return res, err
 		}
 		for _, e := range items {
 			if !e.Enabled || !e.Initialized {
+				continue
+			}
+			if !a.extensionHealthy(e.Slug, e.Hooks) {
+				res.Unhealthy = append(res.Unhealthy, e.Slug)
 				continue
 			}
 			res.Enabled = append(res.Enabled, e.Slug)
@@ -750,8 +781,17 @@ func (a *App) ListEnabledExtensions(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		ledger, err := loadTagFallbacks(r.Context(), a.DB)
+		if err != nil {
+			return res, err
+		}
+		for tag, rec := range ledger {
+			res.Fallbacks = append(res.Fallbacks, publicFallback{Tag: tag, Slug: rec.Slug, HTML: rec.HTML})
+		}
 		sort.Strings(res.Enabled)
 		sort.Strings(res.Editors)
+		sort.Strings(res.Unhealthy)
+		sort.Slice(res.Fallbacks, func(i, j int) bool { return res.Fallbacks[i].Tag < res.Fallbacks[j].Tag })
 		return res, nil
 	})
 	if err != nil {

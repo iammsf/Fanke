@@ -97,7 +97,7 @@ func (a *App) PostComment(w http.ResponseWriter, r *http.Request) {
 		AuthorName: req.AuthorName, AuthorEmail: strings.TrimSpace(req.AuthorEmail),
 		Content:    render.SanitizeHTML(toHTML(req.Content)),
 		Status:     a.commentStatus(),
-		IPHash:     ipHash(r),
+		IPHash:     a.ipHash(r),
 	}
 	if req.ParentID != nil {
 		ok, err := a.DB.CommentParentExists(r.Context(), p.ID, *req.ParentID)
