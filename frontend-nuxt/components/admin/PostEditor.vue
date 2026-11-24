@@ -121,6 +121,12 @@ const onEditorSelection = (text: string) => {
   if (selectionTimer) clearTimeout(selectionTimer)
   selectionTimer = setTimeout(() => { editorSelection.value = text }, 150)
 }
+onBeforeUnmount(() => {
+  if (selectionTimer) {
+    clearTimeout(selectionTimer)
+    selectionTimer = null
+  }
+})
 // 润色结果替换选中内容;撤销走编辑器自带历史栈
 const applyPolishText = (text: string) => richEditor.value?.insertSelectionText?.(text)
 const undoEditorChange = () => richEditor.value?.undo?.()

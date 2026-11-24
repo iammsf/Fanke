@@ -8,6 +8,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -58,6 +60,12 @@ type Config struct {
 	WebRoot string
 	// UpdateProxy 下载升级包用的代理(如 http://127.0.0.1:10808);留空则直连。
 	UpdateProxy string
+	// AllowInsecureUpdateHTTP 允许自更新/插件/主题下载走明文 http://(默认 false 强制 https://)。
+	AllowInsecureUpdateHTTP bool
+	// AllowPrivateAIHosts 允许 AI 接口连接的内网主机/IP/CIDR(逗号分隔或 "*",如本机 Ollama)。
+	AllowPrivateAIHosts string
+	// AllowPrivateS3Hosts 允许 S3 接口连接的内网主机/IP/CIDR(逗号分隔或 "*",如内网 MinIO)。
+	AllowPrivateS3Hosts string
 
 	InsecureCookie bool
 
@@ -79,7 +87,7 @@ func Load() *Config {
 		return def
 	}
 	return &Config{
-		Addr:            get("ADDR", ":8080"),
+		Addr:            get("ADDR", "127.0.0.1:8081"),
 		DatabaseURL:     get("DATABASE_URL", ""),
 		JWTSecret:       get("JWT_SECRET", ""),
 		RecoveryKey:     get("RECOVERY_KEY", ""),
@@ -93,17 +101,20 @@ func Load() *Config {
 		ExtensionsDir:   get("EXTENSIONS_DIR", ""),
 		// 缩略图缓存默认落在系统临时目录(开发机可用),生产用 THUMB_DIR 指到持久目录;
 		// 内容寻址的图片本身不可变,缓存丢了只是重新生成,不会数据不一致。
-		ImageCacheDir:          get("THUMB_DIR", filepath.Join(os.TempDir(), "fanke-thumbs")),
-		ThumbAllowHosts:        get("THUMB_ALLOW_HOSTS", ""),
-		RedisURL:               get("REDIS_URL", ""),
-		UpdateManifestURL:      get("UPDATE_MANIFEST_URL", ""),
-		AppDir:                 get("APP_DIR", ""),
-		WebRoot:                get("WEB_ROOT", ""),
-		UpdateProxy:            get("UPDATE_PROXY", ""),
-		InsecureCookie:         get("INSECURE_COOKIE", "false") == "true",
-		BootstrapAdminEmail:    get("BOOTSTRAP_ADMIN_EMAIL", ""),
-		BootstrapAdminUsername: get("BOOTSTRAP_ADMIN_USERNAME", "admin"),
-		BootstrapAdminPassword: get("BOOTSTRAP_ADMIN_PASSWORD", ""),
+		ImageCacheDir:           get("THUMB_DIR", filepath.Join(os.TempDir(), "fanke-thumbs")),
+		ThumbAllowHosts:         get("THUMB_ALLOW_HOSTS", ""),
+		RedisURL:                get("REDIS_URL", ""),
+		UpdateManifestURL:       get("UPDATE_MANIFEST_URL", ""),
+		AppDir:                  get("APP_DIR", ""),
+		WebRoot:                 get("WEB_ROOT", ""),
+		UpdateProxy:             get("UPDATE_PROXY", ""),
+		AllowInsecureUpdateHTTP: get("ALLOW_INSECURE_UPDATE_HTTP", "false") == "true",
+		AllowPrivateAIHosts:     get("ALLOW_PRIVATE_AI_HOSTS", ""),
+		AllowPrivateS3Hosts:     get("ALLOW_PRIVATE_S3_HOSTS", ""),
+		InsecureCookie:          get("INSECURE_COOKIE", "false") == "true",
+		BootstrapAdminEmail:     get("BOOTSTRAP_ADMIN_EMAIL", ""),
+		BootstrapAdminUsername:  get("BOOTSTRAP_ADMIN_USERNAME", "admin"),
+		BootstrapAdminPassword:  get("BOOTSTRAP_ADMIN_PASSWORD", ""),
 	}
 }
 
@@ -131,18 +142,21 @@ func ReadFile(path string) map[string]string {
 	return out
 }
 
-// WriteFile 原子写入配置文件:已存在则保留原权限属主,新建则收紧 0600。
+// WriteFile 原子写入配置文件:拒绝含换行或空字节的键值(防 .env 注入),并始终强制 0600 权限。
 func WriteFile(path string, kv map[string]string) error {
+	for k, v := range kv {
+		if k == "" || strings.ContainsAny(k, "=\r\n\x00 \t") {
+			return fmt.Errorf("配置键非法")
+		}
+		if strings.ContainsAny(v, "\r\n\x00") {
+			return fmt.Errorf("配置项 %s 包含非法控制字符", k)
+		}
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	mode := os.FileMode(0o600)
-	if fi, err := os.Stat(path); err == nil {
-		mode = fi.Mode().Perm()
-	} else if !os.IsNotExist(err) {
-		return err
-	}
+	const mode = os.FileMode(0o600)
 	tmp := path + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
@@ -182,10 +196,34 @@ func WriteFile(path string, kv map[string]string) error {
 	return os.Rename(tmp, path)
 }
 
-// BuildDBURL 由向导表单拼 postgres:// URL(密码做百分号转义)。
+var allowedSSLModes = map[string]bool{
+	"disable":     true,
+	"prefer":      true,
+	"require":     true,
+	"verify-ca":   true,
+	"verify-full": true,
+}
+
+// BuildDBURL 由向导表单安全构造 postgres:// URL:严格校验 sslmode 白名单并拒绝控制字符/换行注入。
 func BuildDBURL(host, port, dbname, user, password, sslmode string) (string, error) {
+	for _, s := range []string{host, port, dbname, user, password, sslmode} {
+		if strings.ContainsAny(s, "\r\n\x00") {
+			return "", fmt.Errorf("数据库参数不能包含换行或空字符")
+		}
+	}
+	host = strings.TrimSpace(host)
+	port = strings.TrimSpace(port)
+	dbname = strings.TrimSpace(dbname)
+	user = strings.TrimSpace(user)
+	sslmode = strings.TrimSpace(sslmode)
 	if host == "" || dbname == "" || user == "" {
 		return "", fmt.Errorf("host/dbname/user 不能为空")
+	}
+	if strings.ContainsAny(host, "/?#@ \t\\") {
+		return "", fmt.Errorf("host 包含非法字符")
+	}
+	if strings.ContainsAny(dbname, "/?#@") {
+		return "", fmt.Errorf("dbname 包含非法字符")
 	}
 	if p, err := strconv.Atoi(port); err != nil || p < 1 || p > 65535 {
 		return "", fmt.Errorf("端口无效")
@@ -193,25 +231,36 @@ func BuildDBURL(host, port, dbname, user, password, sslmode string) (string, err
 	if sslmode == "" {
 		sslmode = "disable"
 	}
-	return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
-		user, urlEscape(password), host, port, dbname, sslmode), nil
+	if !allowedSSLModes[sslmode] {
+		return "", fmt.Errorf("sslmode 仅支持 disable/prefer/require/verify-ca/verify-full")
+	}
+	q := url.Values{}
+	q.Set("sslmode", sslmode)
+	u := &url.URL{
+		Scheme:   "postgres",
+		User:     url.UserPassword(user, password),
+		Host:     net.JoinHostPort(host, port),
+		Path:     "/" + dbname,
+		RawQuery: q.Encode(),
+	}
+	return u.String(), nil
 }
 
-func urlEscape(s string) string {
-	const hexDigits = "0123456789ABCDEF"
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c == '!' || c == '-' || c == '.' || c == '_' || c == '~' ||
-			(c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') {
-			b.WriteByte(c)
-		} else {
-			b.WriteByte('%')
-			b.WriteByte(hexDigits[c>>4])
-			b.WriteByte(hexDigits[c&0x0f])
-		}
+// IsWeakSecret 判断密钥是否为示例占位符或长度不足。
+func IsWeakSecret(val string, minLen int) bool {
+	v := strings.TrimSpace(val)
+	if len(v) < minLen {
+		return true
 	}
-	return b.String()
+	lower := strings.ToLower(v)
+	switch lower {
+	case "change-me", "changeme", "change_me", "secret", "default", "password", "your-secret-here":
+		return true
+	}
+	if strings.Contains(lower, "change-me") {
+		return true
+	}
+	return false
 }
 
 // RandomHex 生成 n 字节随机 hex(用于 JWT_SECRET / RECOVERY_KEY)。

@@ -17,14 +17,21 @@ const data = ref<Page<PostSummary> | null>(null)
 const loading = ref(false)
 const error = ref<any>(null)
 
+let seq = 0
+
 const fetchData = async () => {
   if (!q.value) {
+    seq++
     data.value = null
+    error.value = null
+    loading.value = false
     return
   }
+  const my = ++seq
   loading.value = true
   error.value = null
   const res = await api.posts({ q: q.value, page: page.value, per: 10 })
+  if (my !== seq) return
   if (res) data.value = res
   else error.value = new Error('搜索服务暂不可用')
   loading.value = false

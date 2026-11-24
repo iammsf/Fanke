@@ -59,7 +59,7 @@ func (a *App) Router() http.Handler {
 			r.Post("/auth/refresh", a.Refresh)
 			r.Post("/auth/logout", a.Logout)
 			r.With(a.bearerAuth).Get("/auth/me", a.Me)
-			r.With(a.bearerAuth).Post("/auth/password", a.ChangePassword)
+			r.With(a.rateLimitLogin, a.bearerAuth).Post("/auth/password", a.ChangePassword)
 			r.With(a.bearerAuth).Put("/auth/me", a.UpdateMyProfile)
 
 			// 公开读(带可选 Bearer:已登录用户可预览未公开文章)

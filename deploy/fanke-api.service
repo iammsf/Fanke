@@ -18,17 +18,28 @@ TimeoutStopSec=20
 # ---------- 权限沙箱 ----------
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
+ProtectKernelLogs=true
 ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
 RestrictSUIDSGID=true
 LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+UMask=0027
 # Go 运行时不需要写执行内存,禁用可减少攻击面
-MemoryDenyWriteExecute=false
+MemoryDenyWriteExecute=true
 # 仅放行运行期真正需要写入的目录(插件会写 extensions、缩略图缓存;
-# 在线升级需要写 bin/ 与前端静态目录)
+# 若不需要后台 Web 在线升级,可将 __DIR__/bin 与 __WEB_ROOT__ 从下方移出以进一步收紧写权限)
 ReadWritePaths=__DIR__/state __DIR__/media __DIR__/themes __DIR__/extensions __DIR__/bin __WEB_ROOT__ /var/cache/fanke-thumbs
 
 [Install]

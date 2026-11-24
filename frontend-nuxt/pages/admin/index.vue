@@ -128,9 +128,11 @@ const checkUpdate = async () => {
   }
 }
 
+const safeReleaseUrl = computed(() => safeHref(coreUpdate.value?.page_url))
+
 const openRelease = () => {
-  const url = coreUpdate.value?.page_url
-  if (url) window.open(url, '_blank', 'noopener')
+  const url = safeReleaseUrl.value
+  if (url) window.open(url, '_blank', 'noopener,noreferrer')
 }
 
 const loadData = async () => {
@@ -288,7 +290,7 @@ useHead({ title: '仪表盘 · fanke 后台' })
               @click="checkUpdate"
             >检查更新</el-button>
             <el-button
-              v-if="coreUpdate?.has_update && coreUpdate.page_url"
+              v-if="coreUpdate?.has_update && safeReleaseUrl"
               :icon="Link"
               :disabled="applying"
               @click="openRelease"

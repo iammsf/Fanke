@@ -55,6 +55,9 @@ type App struct {
 
 	// pwd_changed_at 短缓存:避免每个鉴权请求都查一次库
 	pwdCache sync.Map
+
+	// 全局更新互斥锁:防止本体/插件/主题更新并发写盘破坏目录状态
+	updateMu sync.Mutex
 }
 
 func New(cfg *config.Config, db *repo.DB) (*App, error) {
@@ -82,9 +85,10 @@ func New(cfg *config.Config, db *repo.DB) (*App, error) {
 		Limits: NewLimits(),
 		Local:  local,
 		Thumbs: thumbs,
-		AI:     ai.NewClient(db),
+		AI:     ai.NewClientWithAllowlist(db, cfg.AllowPrivateAIHosts),
 	}
 	ConfigureUpdateProxy(cfg.UpdateProxy)
+	ConfigureUpdateHTTP(cfg.AllowInsecureUpdateHTTP)
 	// Signer 必须始终可用:否则配置了 DATABASE_URL 却漏配 JWT_SECRET 时,
 	// 登录/鉴权接口会因 nil 指针 panic。缺密钥时生成进程内临时密钥并告警。
 	if cfg.JWTSecret == "" {
@@ -106,7 +110,7 @@ func (a *App) newSigner(secret string) *auth.Signer {
 func (a *App) attachDB(db *repo.DB, secret string) {
 	a.DB = db
 	// AI 客户端持有启动时的 db;引导模式下那是 nil,不重建会让 ai.chat 一直 panic 到重启。
-	a.AI = ai.NewClient(db)
+	a.AI = ai.NewClientWithAllowlist(db, a.Cfg.AllowPrivateAIHosts)
 	a.Cfg.JWTSecret = secret
 	a.Signer = a.newSigner(secret)
 	a.s3Mu.Lock()

@@ -13,7 +13,7 @@ import {
 
 const { logout } = useAuth()
 const { site, load: loadSettings } = useSettings()
-const { apply: applyTheme } = useThemeCss()
+const { apply: applyTheme, clear: clearTheme } = useThemeCss()
 const { me, load: loadMe } = useAdminMe()
 const route = useRoute()
 
@@ -35,19 +35,27 @@ const active = computed(() => {
   return seg
 })
 
-// 非管理员只保留自己有权访问的入口,管理员专属页面(插件/AI/用户/设置)不显示
+// 非管理员只保留自己有权访问的入口,管理员专属页面(插件/AI/用户/设置/评论)不显示
 const visibleLinks = computed(() => {
-  if (!me.value || me.value.role === 'admin') return links
-  // 评论审核接口要求 admin,作者不可见该入口
+  if (me.value?.role === 'admin') return links
+  // 评论审核接口要求 admin,作者不可见该入口;账号尚未加载前默认按最小权限展示
   const authorAllowed = new Set(['dashboard', 'posts', 'media'])
   return links.filter((l) => authorAllowed.has(l.id))
 })
+let disposed = false
 onMounted(async () => {
+  // 切入后台先卸掉可能残留的前台主题样式,避免覆盖后台控件
+  clearTheme('site')
   // 并行拉取:站点设置 + 账号信息 + 启用插件列表
   const { ensurePublic } = useExtensions()
   const [settings] = await Promise.all([loadSettings(), loadMe(), ensurePublic()])
+  if (disposed) return
   // 后台主题与文章页主题分开,只注入 admin 主题
   await applyTheme('admin', settings?.theme_admin || '')
+})
+onBeforeUnmount(() => {
+  disposed = true
+  clearTheme('admin')
 })
 </script>
 

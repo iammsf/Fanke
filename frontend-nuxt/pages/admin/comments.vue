@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 评论审核:按状态筛选,操作 通过/垃圾/删除
-definePageMeta({ layout: 'admin', middleware: 'auth' })
+definePageMeta({ layout: 'admin', middleware: ['auth', 'admin'] })
 import type { AdminComment, AdminPost, Page } from '~/types'
 
 const { api } = useAuth()
@@ -32,18 +32,25 @@ const loadTitles = async () => {
   }
 }
 
+let loadSeq = 0
+
 const load = async () => {
+  const my = ++loadSeq
   loading.value = true
   error.value = null
   await loadTitles()
+  if (my !== loadSeq) return
   try {
-    data.value = await api<Page<AdminComment>>(
+    const res = await api<Page<AdminComment>>(
       `/admin/comments?status=${encodeURIComponent(status.value)}&per=${PER}&page=${page.value}`,
     )
+    if (my !== loadSeq) return
+    data.value = res
   } catch (e: any) {
+    if (my !== loadSeq) return
     error.value = e
   } finally {
-    loading.value = false
+    if (my === loadSeq) loading.value = false
   }
 }
 onMounted(load)

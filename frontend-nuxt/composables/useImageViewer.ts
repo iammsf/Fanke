@@ -9,25 +9,70 @@ export interface IvConfig {
   replace_img: boolean
 }
 
-// 一次扫描两种标签:fanke-img(插件标签)与原生 img(仅在开启替换时处理)。
-// 说明文字 = 标签内的连续文本,不能用 "<" 包裹其他标签。
-const RE_ALL = /<(fanke-img)\b([^>]*)>(?:([^<]*?)<\/fanke-img\s*>)?|<img\b([^>]*)>/gi
-
-const attr = (s: string, name: string): string => {
-  const m = s.match(new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`))
-  return m ? (m[1] ?? m[2] ?? m[3] ?? '') : ''
-}
-
-interface IvStyle {
+export interface IvStyle {
   hidden: boolean
   cap: Record<string, string>
   fig: Record<string, string>
   img: Record<string, string>
 }
 
+const RE_NUM = /^\d+(\.\d+)?$/
+const RE_COLOR = /^(#[0-9a-fA-F]{3,8}|rgba?\([\d\s,.%]+\)|[a-zA-Z]{1,20})$/
+const RE_UNSAFE_PROTO = /^\s*(?:javascript|vbscript):/i
+
+const IMG_ATTR_WHITELIST = [
+  'src',
+  'srcset',
+  'sizes',
+  'width',
+  'height',
+  'alt',
+  'title',
+  'loading',
+  'decoding',
+  'data-orig',
+] as const
+
+// 仅在括号外按逗号/空白/分号拆分 token,避免破坏 rgb(0, 0, 0) / rgba(0, 0, 0, 0.5)
+function splitStyleTokens(sty: string): string[] {
+  const out: string[] = []
+  let cur = ''
+  let depth = 0
+  for (const ch of String(sty || '')) {
+    if (ch === '(') {
+      depth++
+      cur += ch
+    } else if (ch === ')') {
+      if (depth > 0) depth--
+      cur += ch
+    } else if (depth === 0 && /[\s,;]/.test(ch)) {
+      if (cur) {
+        out.push(cur)
+        cur = ''
+      }
+    } else {
+      cur += ch
+    }
+  }
+  if (cur) out.push(cur)
+  return out
+}
+
+function safeNum(v: string): string {
+  const s = v.trim()
+  if (!RE_NUM.test(s)) return ''
+  const n = Number(s)
+  return Number.isFinite(n) ? s : ''
+}
+
+function safeColor(v: string): string {
+  const s = v.trim()
+  return RE_COLOR.test(s) ? s : ''
+}
+
 export function parseDesSty(sty: string): IvStyle {
   const out: IvStyle = { hidden: false, cap: {}, fig: {}, img: {} }
-  for (const tok of (sty || '').split(/[,\s;]+/)) {
+  for (const tok of splitStyleTokens(sty)) {
     if (!tok) continue
     if (tok === 'hidden') out.hidden = true
     else if (tok === 'b') out.cap['font-weight'] = '700'
@@ -38,12 +83,25 @@ export function parseDesSty(sty: string): IvStyle {
       const k = tok.slice(0, i)
       const v = tok.slice(i + 1)
       if (!v) continue
-      if (k === 'fs') out.cap['font-size'] = `${v}px`
-      else if (k === 'c') out.cap['color'] = v
-      else if (k === 'bg') out.cap['background'] = v
-      else if (k === 'bd') out.cap['border'] = `1px solid ${v}`
-      else if (k === 'w') out.fig['width'] = `${v}%`
-      else if (k === 'r') out.img['border-radius'] = `${v}px`
+      if (k === 'fs') {
+        const n = safeNum(v)
+        if (n) out.cap['font-size'] = `${n}px`
+      } else if (k === 'c') {
+        const c = safeColor(v)
+        if (c) out.cap['color'] = c
+      } else if (k === 'bg') {
+        const c = safeColor(v)
+        if (c) out.cap['background'] = c
+      } else if (k === 'bd') {
+        const c = safeColor(v)
+        if (c) out.cap['border'] = `1px solid ${c}`
+      } else if (k === 'w') {
+        const n = safeNum(v)
+        if (n) out.fig['width'] = `${n}%`
+      } else if (k === 'r') {
+        const n = safeNum(v)
+        if (n) out.img['border-radius'] = `${n}px`
+      }
     }
   }
   return out
@@ -66,14 +124,94 @@ const cssText = (o: Record<string, string>) =>
     .map(([k, v]) => `${k}:${v}`)
     .join(';')
 
-// 判断某个位置是否位于未闭合的 <a> 内:替换原生 img 时跳过外链图片,避免把 figure 塞进链接。
-const insideLink = (html: string, pos: number) => {
-  let depth = 0
-  const re = /<a\b[^>]*>|<\/a\s*>/gi
-  const head = html.slice(0, pos)
-  let m: RegExpExecArray | null
-  while ((m = re.exec(head))) depth += m[0].startsWith('</') ? -1 : 1
-  return depth > 0
+/**
+ * 基于 DOMParser + 白名单属性拷贝把 <fanke-img>（及可选的普通 <img>）安全转换为 <figure>。
+ * 彻底杜绝正则拆装 HTML 属性导致的属性逃逸 XSS。
+ */
+export function transformImageViewerHtml(html: string, cfg: IvConfig): string {
+  if (!html) return html
+  if (typeof DOMParser === 'undefined' || typeof document === 'undefined') return html
+
+  const doc = new DOMParser().parseFromString(`<div id="__fanke_iv_root__">${html}</div>`, 'text/html')
+  const root = doc.getElementById('__fanke_iv_root__')
+  if (!root) return html
+
+  const selector = cfg.replace_img ? 'fanke-img, img' : 'fanke-img'
+  const targets = Array.from(root.querySelectorAll(selector))
+
+  for (const el of targets) {
+    if (!el.isConnected) continue
+    const isPlugin = el.tagName.toLowerCase() === 'fanke-img'
+    const rawSrc = (el.getAttribute('src') || '').trim()
+    const src = rawSrc && !RE_UNSAFE_PROTO.test(rawSrc) ? rawSrc : ''
+
+    if (!isPlugin) {
+      if (!cfg.replace_img) continue
+      if (!src) continue
+      if (el.closest('a') || el.closest('figure.iv-img')) continue
+    }
+
+    // 插件标签为非自闭合自定义元素:仅采集首个子元素前的纯文本作图注,
+    // 若历史数据存在未闭合 <fanke-img>,把被吞入的后续节点原样放回 figure 之后。
+    let directText = ''
+    const trailingNodes: Node[] = []
+    if (isPlugin) {
+      let hitElement = false
+      for (const child of Array.from(el.childNodes)) {
+        if (!hitElement && child.nodeType === 3) {
+          directText += child.textContent || ''
+        } else {
+          hitElement = true
+          trailingNodes.push(child)
+        }
+      }
+    }
+
+    const caption = directText.trim() || (el.getAttribute('des') || '').trim() || (el.getAttribute('alt') || '').trim()
+    const pos = (el.getAttribute('des_pos') || cfg.des_pos || 'middle bottom').toLowerCase()
+    const sty = mergeDesSty(cfg.des_sty, el.getAttribute('des_sty') || '')
+    const vert = pos.includes('top') ? 'top' : 'bottom'
+    const horiz = pos.includes('left') ? 'left' : pos.includes('right') ? 'right' : 'mid'
+    const cls = `iv-img iv-pos-${vert} iv-align-${horiz}`
+
+    const fig = doc.createElement('figure')
+    fig.className = cls
+    const figStyle = cssText(sty.fig)
+    if (figStyle) fig.setAttribute('style', figStyle)
+
+    if (src) {
+      const img = doc.createElement('img')
+      for (const name of IMG_ATTR_WHITELIST) {
+        const val = el.getAttribute(name)
+        if (val === null) continue
+        if ((name === 'src' || name === 'data-orig') && RE_UNSAFE_PROTO.test(val)) continue
+        img.setAttribute(name, val)
+      }
+      const imgStyle = cssText(sty.img)
+      if (imgStyle) img.setAttribute('style', imgStyle)
+      if (!img.hasAttribute('loading')) img.setAttribute('loading', 'lazy')
+      fig.appendChild(img)
+    } else {
+      const sk = doc.createElement('div')
+      sk.className = 'iv-skeleton'
+      sk.setAttribute('title', '点击设置图片')
+      sk.textContent = '🖼 点击设置图片'
+      fig.appendChild(sk)
+    }
+
+    if (!sty.hidden) {
+      const cap = doc.createElement('figcaption')
+      cap.className = 'iv-cap'
+      const capStyle = cssText(sty.cap)
+      if (capStyle) cap.setAttribute('style', capStyle)
+      cap.textContent = caption
+      fig.appendChild(cap)
+    }
+
+    el.replaceWith(fig, ...trailingNodes)
+  }
+
+  return root.innerHTML
 }
 
 export function useImageViewer() {
@@ -115,40 +253,7 @@ export function useImageViewer() {
   function transform(html: string): string {
     if (!html) return html
     if (!config.value) return html
-    const cfg = config.value
-    const re = new RegExp(RE_ALL.source, 'gi')
-    return html.replace(re, (whole, tagName, fAttrs, capClosed, nAttrs, offset) => {
-      const isPlugin = !!tagName
-      if (!isPlugin) {
-        if (!cfg.replace_img) return whole
-        if (!attr(nAttrs || '', 'src')) return whole
-        if (insideLink(html, offset)) return whole
-      }
-      const attrs = isPlugin ? (fAttrs || '') : (nAttrs || '')
-      const src = attr(attrs, 'src')
-      const alt = attr(attrs, 'alt')
-      const caption = ((isPlugin ? capClosed : '') || '').trim() || attr(attrs, 'des') || alt
-      const pos = (attr(attrs, 'des_pos') || cfg.des_pos || 'middle bottom').toLowerCase()
-      const sty = mergeDesSty(cfg.des_sty, attr(attrs, 'des_sty'))
-      const vert = pos.includes('top') ? 'top' : 'bottom'
-      const horiz = pos.includes('left') ? 'left' : pos.includes('right') ? 'right' : 'mid'
-      const cls = `iv-img iv-pos-${vert} iv-align-${horiz}`
-      const figStyle = cssText(sty.fig)
-      const capStyle = cssText(sty.cap)
-      const imgStyle = cssText(sty.img)
-      const cap = sty.hidden ? '' : `<figcaption class="iv-cap"${capStyle ? ` style="${capStyle}"` : ''}>${caption}</figcaption>`
-      // 原样透传其余属性(含服务端注入的 srcset/sizes/width/height 与 decoding),
-      // 只剔除插件自身的 des* 标记与 style(style 由 des_sty 的 r= 重新生成)。
-      const kept = attrs
-        .replace(/\s+des(?:_pos|_sty)?\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/g, '')
-        .replace(/\s+style\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/g, '')
-        .trim()
-      const hasLoading = /\bloading\s*=/.test(kept)
-      const visual = src
-        ? `<img${kept ? ` ${kept}` : ''}${imgStyle ? ` style="${imgStyle}"` : ''}${hasLoading ? '' : ' loading="lazy"'} />`
-        : `<div class="iv-skeleton" title="点击设置图片">🖼 点击设置图片</div>`
-      return `<figure class="${cls}"${figStyle ? ` style="${figStyle}"` : ''}>${visual}${cap}</figure>`
-    })
+    return transformImageViewerHtml(html, config.value)
   }
 
   return { config, load, transform }

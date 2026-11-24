@@ -50,6 +50,7 @@ SKIP_PLUGINS=0
 UPDATE=0
 PORT_SET=0
 DB_URL_SET=0
+DOMAIN_SET=0
 NO_ARGS=0
 YES=0
 if [ $# -eq 0 ]; then NO_ARGS=1; fi
@@ -57,6 +58,13 @@ if [ $# -eq 0 ]; then NO_ARGS=1; fi
 log()  { printf '\033[36m[fanke]\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m[警告]\033[0m %s\n' "$*"; }
 die()  { printf '\033[31m[错误]\033[0m %s\n' "$*" >&2; exit 1; }
+TMP_WORK_DIR=""
+cleanup_tmp() {
+  if [ -n "${TMP_WORK_DIR:-}" ] && [ -d "$TMP_WORK_DIR" ]; then
+    rm -rf "$TMP_WORK_DIR"
+  fi
+}
+trap cleanup_tmp EXIT
 trap 'printf "\033[31m[错误]\033[0m 第 %s 行执行失败,请把上方输出发回反馈。\n" "$LINENO" >&2' ERR
 
 usage() {
@@ -92,7 +100,7 @@ EOF
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --domain) DOMAIN="${2:-}"; shift 2 ;;
+    --domain) DOMAIN="${2:-}"; DOMAIN_SET=1; shift 2 ;;
     --dir) APP_DIR="${2:-}"; shift 2 ;;
     --port) PORT="${2:-}"; PORT_SET=1; shift 2 ;;
     --db-url) DB_URL="${2:-}"; DB_URL_SET=1; shift 2 ;;
@@ -115,8 +123,16 @@ done
 if [ "$(id -u)" -ne 0 ]; then
   command -v sudo >/dev/null 2>&1 || die "请用 root 运行:bash deploy/install.sh"
   log "需要 root 权限,正在通过 sudo 重新执行..."
-  exec sudo -E bash "$0" "${ORIG_ARGS[@]}"
+  exec sudo bash "$0" "${ORIG_ARGS[@]}"
 fi
+
+sed_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//&/\\&}"
+  s="${s//|/\\|}"
+  printf '%s' "$s"
+}
 
 # ---------- 交互式安装 ----------
 ask() {
@@ -350,7 +366,7 @@ esac
 version_ge() { [ "$1" = "$2" ] || [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" = "$2" ]; }
 
 ensure_go() {
-  local want have ver
+  local want want_re have ver tmp_dir json_file tarball expected_sha
   want="$(awk '/^go /{print $2; exit}' "$REPO_ROOT/backend/go.mod")"
   [ -n "$want" ] || die "无法从 backend/go.mod 读取 Go 版本"
   have=""
@@ -362,13 +378,33 @@ ensure_go() {
     return 0
   fi
   log "安装 Go >= $want ..."
-  ver="$(curl -fsSL 'https://go.dev/dl/?mode=json' 2>/dev/null | tr -d ' \n' \
-    | grep -o "\"version\":\"go${want}[^\"]*\"" | head -n1 | cut -d'"' -f4 || true)"
-  [ -n "$ver" ] || ver="go${want}.0"
-  curl -fL --retry 3 -o /tmp/fanke-go.tar.gz "https://go.dev/dl/${ver}.linux-${ARCH}.tar.gz"
+  tmp_dir="$(mktemp -d)"
+  TMP_WORK_DIR="$tmp_dir"
+  json_file="$tmp_dir/go-dl.json"
+  curl -fsSL 'https://go.dev/dl/?mode=json' -o "$json_file" \
+    || die "无法获取 Go 官方版本清单"
+  want_re="${want//./\\.}"
+  ver="$(tr -d '[:space:]' < "$json_file" \
+    | grep -o "\"version\":\"go${want_re}[^\"]*\"" | head -n1 | cut -d'"' -f4 || true)"
+  if [ -z "$ver" ]; then
+    curl -fsSL 'https://go.dev/dl/?mode=json&include=all' -o "$json_file" \
+      || die "无法获取 Go 官方完整版本清单"
+    ver="$(tr -d '[:space:]' < "$json_file" \
+      | grep -o "\"version\":\"go${want_re}[^\"]*\"" | head -n1 | cut -d'"' -f4 || true)"
+  fi
+  [ -n "$ver" ] || die "在 Go 官方清单中未找到 >= ${want} 的版本"
+  tarball="${ver}.linux-${ARCH}.tar.gz"
+  expected_sha="$(tr -d '[:space:]' < "$json_file" | tr '{' '\n' \
+    | grep "\"filename\":\"${tarball}\"" | head -n1 \
+    | sed -n 's/.*"sha256":"\([0-9a-fA-F]\{64\}\)".*/\1/p' || true)"
+  [ -n "$expected_sha" ] || die "无法从 Go 官方 JSON 获取 ${tarball} 的 sha256"
+  curl -fL --retry 3 -o "$tmp_dir/$tarball" "https://go.dev/dl/${tarball}"
+  ( cd "$tmp_dir" && printf '%s  %s\n' "$expected_sha" "$tarball" > SHA256SUMS && sha256sum -c SHA256SUMS ) \
+    || die "Go 安装包 SHA256 校验失败"
   rm -rf /usr/local/go
-  tar -C /usr/local -xzf /tmp/fanke-go.tar.gz
-  rm -f /tmp/fanke-go.tar.gz
+  tar -C /usr/local -xzf "$tmp_dir/$tarball"
+  rm -rf "$tmp_dir"
+  TMP_WORK_DIR=""
   ln -sf /usr/local/go/bin/go /usr/local/bin/go
   ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
   hash -r
@@ -377,7 +413,7 @@ ensure_go() {
 
 # ---------- Node.js ----------
 ensure_node() {
-  local major=0 ver
+  local major=0 ver tmp_dir tarball expected_sha
   if command -v node >/dev/null 2>&1; then
     major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
   fi
@@ -386,12 +422,22 @@ ensure_node() {
     return 0
   fi
   log "安装 Node.js 22 ..."
-  ver="$(curl -fsSL https://nodejs.org/dist/index.json | tr -d ' \n' \
+  tmp_dir="$(mktemp -d)"
+  TMP_WORK_DIR="$tmp_dir"
+  ver="$(curl -fsSL https://nodejs.org/dist/index.json | tr -d '[:space:]' \
     | grep -o '"version":"v22[^"]*"' | head -n1 | cut -d'"' -f4 || true)"
   [ -n "$ver" ] || die "无法获取 Node.js 版本信息"
-  curl -fL --retry 3 -o /tmp/fanke-node.tar.xz "https://nodejs.org/dist/${ver}/node-${ver}-linux-${NODE_ARCH}.tar.xz"
-  tar -C /usr/local --strip-components=1 -xJf /tmp/fanke-node.tar.xz
-  rm -f /tmp/fanke-node.tar.xz
+  tarball="node-${ver}-linux-${NODE_ARCH}.tar.xz"
+  curl -fsSL --retry 3 -o "$tmp_dir/SHASUMS256.txt" "https://nodejs.org/dist/${ver}/SHASUMS256.txt" \
+    || die "无法获取 Node.js 官方 SHASUMS256.txt"
+  expected_sha="$(awk -v f="$tarball" '$2 == f && $1 ~ /^[0-9a-fA-F]{64}$/ {print $1; exit}' "$tmp_dir/SHASUMS256.txt" || true)"
+  [ -n "$expected_sha" ] || die "SHASUMS256.txt 中未找到 ${tarball} 的合法 SHA256"
+  curl -fL --retry 3 -o "$tmp_dir/$tarball" "https://nodejs.org/dist/${ver}/${tarball}"
+  ( cd "$tmp_dir" && printf '%s  %s\n' "$expected_sha" "$tarball" > SHA256SUMS && sha256sum -c SHA256SUMS ) \
+    || die "Node.js 安装包 SHA256 校验失败"
+  tar -C /usr/local --strip-components=1 -xJf "$tmp_dir/$tarball"
+  rm -rf "$tmp_dir"
+  TMP_WORK_DIR=""
   hash -r
   log "Node.js 安装完成: $(node -v)"
 }
@@ -425,17 +471,31 @@ provision_db() {
   ensure_postgres
   [ -n "$DB_PASS" ] || DB_PASS="$(openssl rand -hex 16)"
   local exists
-  exists="$(su - postgres -c "psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'\"" | tr -d '[:space:]')"
+  exists="$(su - postgres -c "psql -tA" <<EOF | tr -d '[:space:]'
+SELECT 1 FROM pg_roles WHERE rolname='$DB_USER';
+EOF
+)"
   if [ "$exists" != "1" ]; then
-    su - postgres -c "psql -v ON_ERROR_STOP=1 -c \"CREATE ROLE $DB_USER LOGIN PASSWORD '$DB_PASS'\""
+    su - postgres -c "psql -v ON_ERROR_STOP=1" >/dev/null <<EOF
+CREATE ROLE "$DB_USER" LOGIN PASSWORD '$DB_PASS';
+EOF
   else
-    su - postgres -c "psql -v ON_ERROR_STOP=1 -c \"ALTER ROLE $DB_USER WITH LOGIN PASSWORD '$DB_PASS'\""
+    su - postgres -c "psql -v ON_ERROR_STOP=1" >/dev/null <<EOF
+ALTER ROLE "$DB_USER" WITH LOGIN PASSWORD '$DB_PASS';
+EOF
   fi
-  exists="$(su - postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='$DB_NAME'\"" | tr -d '[:space:]')"
+  exists="$(su - postgres -c "psql -tA" <<EOF | tr -d '[:space:]'
+SELECT 1 FROM pg_database WHERE datname='$DB_NAME';
+EOF
+)"
   if [ "$exists" != "1" ]; then
-    su - postgres -c "psql -v ON_ERROR_STOP=1 -c \"CREATE DATABASE $DB_NAME OWNER $DB_USER\""
+    su - postgres -c "psql -v ON_ERROR_STOP=1" >/dev/null <<EOF
+CREATE DATABASE "$DB_NAME" OWNER "$DB_USER";
+EOF
   fi
-  su - postgres -c "psql -d $DB_NAME -v ON_ERROR_STOP=1 -c \"GRANT ALL ON SCHEMA public TO $DB_USER\"" >/dev/null
+  su - postgres -c "psql -d $DB_NAME -v ON_ERROR_STOP=1" >/dev/null <<EOF
+GRANT ALL ON SCHEMA public TO "$DB_USER";
+EOF
   DB_URL="postgres://$DB_USER:$DB_PASS@127.0.0.1:5432/$DB_NAME?sslmode=disable"
   log "本地数据库就绪: $DB_NAME(用户 $DB_USER)"
 }
@@ -534,13 +594,23 @@ log "前端已部署到 $WEB_ROOT"
 
 # ---------- 运行时配置 ----------
 write_env() {
-  local jwt rec
+  local jwt rec esc_db_url esc_port esc_site_url
   if [ -f "$CONFIG_FILE" ]; then
     if [ "$DB_URL_SET" -eq 1 ]; then
-      sed -i "s|^DATABASE_URL=.*|DATABASE_URL=$DB_URL|" "$CONFIG_FILE"
+      esc_db_url="$(sed_escape "$DB_URL")"
+      sed -i "s|^DATABASE_URL=.*|DATABASE_URL=$esc_db_url|" "$CONFIG_FILE"
     fi
     if [ "$PORT_SET" -eq 1 ]; then
-      sed -i "s|^ADDR=.*|ADDR=127.0.0.1:$PORT|" "$CONFIG_FILE"
+      esc_port="$(sed_escape "$PORT")"
+      sed -i "s|^ADDR=.*|ADDR=127.0.0.1:$esc_port|" "$CONFIG_FILE"
+    fi
+    if [ "$DOMAIN_SET" -eq 1 ] && [ -n "$DOMAIN" ]; then
+      esc_site_url="$(sed_escape "http://$DOMAIN")"
+      if grep -q '^SITE_URL=' "$CONFIG_FILE"; then
+        sed -i "s|^SITE_URL=.*|SITE_URL=$esc_site_url|" "$CONFIG_FILE"
+      else
+        printf '\nSITE_URL=%s\n' "http://$DOMAIN" >> "$CONFIG_FILE"
+      fi
     fi
     log "保留已有配置 $CONFIG_FILE"
     return 0
@@ -563,6 +633,12 @@ THUMB_ALLOW_HOSTS=
 # 初始为 HTTP 部署,登录 Cookie 不能带 Secure;启用 HTTPS 后请改为 false 并重启服务
 INSECURE_COOKIE=true
 EOF
+  if [ -n "$DOMAIN" ]; then
+    cat >> "$CONFIG_FILE" <<EOF
+# 站点对外根 URL(防 Host 头投毒;启用 HTTPS 后请改为 https:// 并重启服务)
+SITE_URL=http://$DOMAIN
+EOF
+  fi
   if [ -n "$ADMIN_USER" ] && [ -n "$ADMIN_EMAIL" ] && [ -n "$ADMIN_PASS" ]; then
     cat >> "$CONFIG_FILE" <<EOF
 BOOTSTRAP_ADMIN_USERNAME=$ADMIN_USER
@@ -579,14 +655,16 @@ write_env
 
 # ---------- systemd ----------
 log "安装 systemd 服务..."
-sed -e "s|__DIR__|$APP_DIR|g" -e "s|__WEB_ROOT__|$WEB_ROOT|g" "$SCRIPT_DIR/fanke-api.service" > /etc/systemd/system/fanke-api.service
+esc_dir="$(sed_escape "$APP_DIR")"
+esc_web_root="$(sed_escape "$WEB_ROOT")"
+sed -e "s|__DIR__|$esc_dir|g" -e "s|__WEB_ROOT__|$esc_web_root|g" "$SCRIPT_DIR/fanke-api.service" > /etc/systemd/system/fanke-api.service
 systemctl daemon-reload
 systemctl enable "$APP_NAME-api" >/dev/null 2>&1 || true
 systemctl restart "$APP_NAME-api"
 
 # ---------- nginx ----------
 configure_nginx() {
-  local conf_dir conf_path
+  local conf_dir conf_path esc_server_name esc_root esc_port
   case "$PANEL" in
     baota)
       NGINX_BIN="/www/server/nginx/sbin/nginx"
@@ -621,9 +699,12 @@ configure_nginx() {
       ;;
   esac
 
-  sed -e "s|__SERVER_NAME__|${DOMAIN:-_}|g" \
-      -e "s|__ROOT__|$ROOT_IN_CONF|g" \
-      -e "s|__PORT__|$PORT|g" \
+  esc_server_name="$(sed_escape "${DOMAIN:-_}")"
+  esc_root="$(sed_escape "$ROOT_IN_CONF")"
+  esc_port="$(sed_escape "$PORT")"
+  sed -e "s|__SERVER_NAME__|$esc_server_name|g" \
+      -e "s|__ROOT__|$esc_root|g" \
+      -e "s|__PORT__|$esc_port|g" \
       "$SCRIPT_DIR/nginx.conf.template" > "$conf_path"
   log "已写入 nginx 配置 $conf_path"
 
@@ -690,7 +771,7 @@ cat <<EOF
 ------------------------------------------------------------
  提示:
  - 数据库/密钥都在 $CONFIG_FILE,请一并纳入备份,不要泄露。
- - 当前配置为 HTTP(INSECURE_COOKIE=true);启用 HTTPS 后请把它改成 false 并重启。
+ - 当前配置为 HTTP(INSECURE_COOKIE=true);启用 HTTPS 后请把它改成 false(若已配置 SITE_URL 也请改为 https://)并重启。
  - 启用 HTTPS 后,建议把站点配置里的 80 端口跳转到 443。
  - 纯 Linux:可执行 certbot --nginx -d ${DOMAIN:-your-domain} 申请证书。
  - 宝塔/1Panel:在面板里为站点 ${SITE_NAME} 绑定域名并申请证书即可。

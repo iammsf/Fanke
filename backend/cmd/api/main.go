@@ -20,6 +20,12 @@ import (
 
 func main() {
 	cfg := config.Load()
+	if cfg.JWTSecret != "" && config.IsWeakSecret(cfg.JWTSecret, 32) {
+		log.Fatalf("JWT_SECRET 过弱或仍为示例占位符(须 >= 32 字节随机值), 拒绝启动")
+	}
+	if cfg.RecoveryKey != "" && config.IsWeakSecret(cfg.RecoveryKey, 16) {
+		log.Fatalf("RECOVERY_KEY 过弱或仍为示例占位符(须 >= 16 字节随机值), 拒绝启动")
+	}
 
 	var db *repo.DB
 	if cfg.Configured() {
@@ -67,6 +73,8 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    64 << 10,
 	}
 
 	go func() {

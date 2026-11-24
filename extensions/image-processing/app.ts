@@ -14,20 +14,38 @@ interface Window {
 // 逻辑与旧版 init/index.html 内联脚本保持一致，仅做类型化整理。
 
 (() => {
-  const origin = location.origin, pending = new Map(); let seq = 0, working = false;
+  const sameOrigin = location.origin && location.origin !== 'null' ? location.origin : '';
+  const targetOrigin = sameOrigin || '*';
+  const pending = new Map();
+  const confirmPending = new Map();
+  let seq = 0, working = false;
   window.addEventListener('message', (event) => {
-    if (event.origin !== origin || event.source !== parent) return;
+    if (event.source !== parent) return;
+    if (sameOrigin && event.origin !== sameOrigin) return;
     const data = event.data;
+    if (data && data.type === 'fanke:confirm:result' && confirmPending.has(data.id)) {
+      const done = confirmPending.get(data.id); confirmPending.delete(data.id);
+      done(!!data.confirmed);
+      return;
+    }
     if (!data || data.type !== 'fanke:plugin-config:result' || !pending.has(data.id)) return;
     const item = pending.get(data.id); pending.delete(data.id); clearTimeout(item.timer);
     data.error ? item.reject(new Error(data.error)) : item.resolve(data.result);
   });
+  function askConfirm(message) {
+    if (parent === window) return Promise.resolve(confirm(message));
+    return new Promise((resolve) => {
+      const id = `image-confirm-${Date.now()}-${++seq}`;
+      confirmPending.set(id, resolve);
+      parent.postMessage({ type: 'fanke:confirm', id, message }, targetOrigin);
+    });
+  }
   function call(action, payload) {
     return new Promise((resolve, reject) => {
       const id = `image-${Date.now()}-${++seq}`;
       const timer = setTimeout(() => { pending.delete(id); reject(new Error('请求超时，请在后台插件详情页重试')); }, 30000);
       pending.set(id, { resolve, reject, timer });
-      parent.postMessage({ type: 'fanke:plugin-config', id, action, payload }, origin);
+      parent.postMessage({ type: 'fanke:plugin-config', id, action, payload }, targetOrigin);
     });
   }
   const editor = document.getElementById('editor');
@@ -54,7 +72,7 @@ interface Window {
       document.getElementById('widths').value = widths.join(', '); status('图片处理设置已保存。');
     } catch (error) { status(error.message || '保存失败', true); } finally { working = false; editor.disabled = false; }
   };
-  document.getElementById('reload').onclick = () => { if (confirm('重新读取将丢弃未保存修改，继续？')) load(); };
+  document.getElementById('reload').onclick = async () => { if (await askConfirm('重新读取将丢弃未保存修改，继续？')) load(); };
   document.getElementById('retry').onclick = load;
   load();
 })();

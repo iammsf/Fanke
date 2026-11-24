@@ -4,15 +4,19 @@
 import { Menu, Close } from '@element-plus/icons-vue'
 
 const { site, settings } = useSettings()
-const nav = computed(
-  () =>
+const nav = computed(() =>
+  (
     settings.value?.nav ?? [
       { label: '首页', href: '/' },
       { label: '分类', href: '/categories' },
       { label: '标签', href: '/tags' },
       { label: '搜索', href: '/search' },
-    ],
+    ]
+  )
+    .map((n) => ({ ...n, href: safeHref(n.href, true) }))
+    .filter((n) => !!n.href),
 )
+const isExternalHref = (href: string) => /^https?:\/\//i.test(href)
 
 const menuOpen = ref(false)
 const searchOpen = ref(false)
@@ -39,6 +43,7 @@ const isSearch = (href: string) => href === '/search'
       <nav class="nav nav-desktop">
         <template v-for="n in nav" :key="n.href">
           <button v-if="isSearch(n.href)" class="nav-btn" type="button" @click="searchOpen = true">{{ n.label }}</button>
+          <a v-else-if="isExternalHref(n.href)" :href="n.href" target="_blank" rel="noopener noreferrer">{{ n.label }}</a>
           <NuxtLink v-else :to="n.href">{{ n.label }}</NuxtLink>
         </template>
       </nav>
@@ -50,6 +55,7 @@ const isSearch = (href: string) => href === '/search'
     <nav v-if="menuOpen" class="nav nav-mobile">
       <template v-for="n in nav" :key="n.href">
         <button v-if="isSearch(n.href)" class="nav-btn" type="button" @click="menuOpen = false; searchOpen = true">{{ n.label }}</button>
+        <a v-else-if="isExternalHref(n.href)" :href="n.href" target="_blank" rel="noopener noreferrer">{{ n.label }}</a>
         <NuxtLink v-else :to="n.href">{{ n.label }}</NuxtLink>
       </template>
     </nav>

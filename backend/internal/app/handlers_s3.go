@@ -4,10 +4,25 @@ import (
 	"context"
 	"errors"
 	"fanke/backend/internal/media"
+	"fanke/backend/internal/netutil"
 	"fanke/backend/internal/repo"
 	"net/http"
 	"strings"
 )
+
+func (a *App) validateS3Endpoint(ctx context.Context, endpoint string) error {
+	allow := ""
+	if a.Cfg != nil {
+		allow = a.Cfg.AllowPrivateS3Hosts
+	}
+	if err := netutil.ValidateEndpointURL(ctx, endpoint, allow, false); err != nil {
+		if errors.Is(err, netutil.ErrForbiddenAddress) {
+			return errors.New("禁止访问内网/元数据 S3 地址(如需连接内网自建 MinIO/S3 请在 ALLOW_PRIVATE_S3_HOSTS 中放行)")
+		}
+		return errors.New("S3 endpoint 地址非法: " + err.Error())
+	}
+	return nil
+}
 
 const secretMask = "********"
 
@@ -73,6 +88,12 @@ func (a *App) PutS3Config(w http.ResponseWriter, r *http.Request) {
 		if c.Enabled && (c.Endpoint == "" || c.AccessKey == "" || c.SecretKey == "" || c.Bucket == "") {
 			a.fail(w, http.StatusBadRequest, "启用时 endpoint/access_key/bucket 必填")
 			return
+		}
+		if strings.TrimSpace(c.Endpoint) != "" {
+			if err := a.validateS3Endpoint(r.Context(), c.Endpoint); err != nil {
+				a.fail(w, http.StatusBadRequest, err.Error())
+				return
+			}
 		}
 	}
 	if in.DefaultBucketID != "" && !ids[in.DefaultBucketID] {
@@ -188,8 +209,15 @@ func (a *App) s3CredsFrom(r *http.Request, in media.S3Config) media.S3Config {
 }
 func (a *App) S3Buckets(w http.ResponseWriter, r *http.Request) {
 	var in media.S3Config
-	_ = decodeJSON(r, &in)
+	if err := decodeJSON(r, &in); err != nil {
+		a.fail(w, http.StatusBadRequest, "invalid json")
+		return
+	}
 	in = a.s3CredsFrom(r, in)
+	if err := a.validateS3Endpoint(r.Context(), in.Endpoint); err != nil {
+		a.fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	names, err := media.ListBuckets(r.Context(), in)
 	if err != nil {
 		a.fail(w, http.StatusBadGateway, "获取桶列表失败: "+err.Error())
@@ -199,10 +227,17 @@ func (a *App) S3Buckets(w http.ResponseWriter, r *http.Request) {
 }
 func (a *App) S3Test(w http.ResponseWriter, r *http.Request) {
 	var in media.S3Config
-	_ = decodeJSON(r, &in)
+	if err := decodeJSON(r, &in); err != nil {
+		a.fail(w, http.StatusBadRequest, "invalid json")
+		return
+	}
 	in = a.s3CredsFrom(r, in)
 	if in.Bucket == "" {
 		a.fail(w, http.StatusBadRequest, "bucket required")
+		return
+	}
+	if err := a.validateS3Endpoint(r.Context(), in.Endpoint); err != nil {
+		a.fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := media.Test(r.Context(), in); err != nil {

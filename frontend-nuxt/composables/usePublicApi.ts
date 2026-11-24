@@ -7,6 +7,7 @@ import type {
   SetupStatus,
   SiteSettings,
   TermWithCount,
+  ThemeInfo,
   UserPlugin,
 } from '~/types'
 
@@ -25,13 +26,21 @@ export function usePublicApi() {
     try {
       const headers: Record<string, string> = { Accept: 'application/json' }
       // 已登录后台时带上凭证,未公开文章(草稿)的预览靠它鉴权;匿名访客拿不到草稿。
-      const token = import.meta.client ? sessionStorage.getItem('fanke_access') : null
-      if (token) headers.Authorization = `Bearer ${token}`
+      // 若本地 token 已过期则先主动续期,避免后端 optionalBearer 静默忽略导致草稿 404。
+      if (import.meta.client) {
+        const auth = useAuth()
+        let token = auth.getToken() || sessionStorage.getItem('fanke_access')
+        if (token && auth.isTokenExpired(token)) {
+          const ok = await auth.ensureAuth()
+          token = ok ? auth.getToken() : null
+        }
+        if (token) headers.Authorization = `Bearer ${token}`
+      }
       const res = await fetch(base + path, {
         headers,
         signal: AbortSignal.timeout(8000),
-        // 后端公开读接口已下发 Cache-Control,交给浏览器缓存(30s + SWR)
-        cache: 'default',
+        // 带鉴权头的预览请求禁缓存,避免私密草稿滞留浏览器缓存;匿名公开读沿用后端 Cache-Control
+        cache: headers.Authorization ? 'no-store' : 'default',
       })
       if (!res.ok) return { ok: false, status: res.status }
       return { ok: true, status: res.status, data: (await res.json()) as T }

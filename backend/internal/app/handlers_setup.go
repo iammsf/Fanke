@@ -68,12 +68,13 @@ func (a *App) SetupDB(w http.ResponseWriter, r *http.Request) {
 		req.Port = "5432"
 	}
 	if state == "broken" {
-		if a.Cfg.RecoveryKey == "" {
-			a.fail(w, http.StatusForbidden, "配置文件缺少 RECOVERY_KEY,无法在线找回,请在服务器上补写后重试")
+		if config.IsWeakSecret(a.Cfg.RecoveryKey, 16) {
+			a.fail(w, http.StatusForbidden, "RECOVERY_KEY 未配置或过弱(须 >= 16 位且不可为示例占位符),无法在线找回")
 			return
 		}
 		if subtle.ConstantTimeCompare([]byte(req.RecoveryKey), []byte(a.Cfg.RecoveryKey)) != 1 {
-			a.fail(w, http.StatusUnauthorized, "恢复密钥不正确(见服务器 "+a.Cfg.ConfigPath+" 中 RECOVERY_KEY)")
+			log.Printf("setup db: invalid recovery key (config=%s)", a.Cfg.ConfigPath)
+			a.fail(w, http.StatusUnauthorized, "恢复密钥不正确，请核对服务器配置文件中的 RECOVERY_KEY")
 			return
 		}
 	}
@@ -96,7 +97,8 @@ func (a *App) SetupDB(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := a.persistConfig(req); err != nil {
 		db.Close()
-		a.fail(w, http.StatusInternalServerError, "配置文件写入失败: "+err.Error())
+		log.Printf("setup db: persist config failed: %v", err)
+		a.fail(w, http.StatusInternalServerError, "配置文件写入失败，请查看服务端日志")
 		return
 	}
 	// 敏感字段加密:主密钥来自配置文件中的 RECOVERY_KEY
@@ -119,10 +121,10 @@ func (a *App) persistConfig(req setupDBReq) error {
 		return err
 	}
 	kv["DATABASE_URL"] = url
-	if len(kv["JWT_SECRET"]) < 32 {
+	if config.IsWeakSecret(kv["JWT_SECRET"], 32) {
 		kv["JWT_SECRET"] = config.RandomHex(32)
 	}
-	if len(kv["RECOVERY_KEY"]) < 16 {
+	if config.IsWeakSecret(kv["RECOVERY_KEY"], 16) {
 		kv["RECOVERY_KEY"] = config.RandomHex(16)
 	}
 	setDefault := func(k, v string) {
@@ -159,6 +161,8 @@ type setupReq struct {
 // SetupComplete 向导第二步(仅空库):创建首个管理员并写入默认设置,直接发令牌。
 // 库中已有用户时不可用——找回数据只需第一步连上原库即可,原账号密码不变。
 func (a *App) SetupComplete(w http.ResponseWriter, r *http.Request) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.setupState() != "ok" {
 		a.fail(w, http.StatusServiceUnavailable, "请先完成数据库配置")
 		return
@@ -179,8 +183,8 @@ func (a *App) SetupComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Admin.Username = strings.TrimSpace(req.Admin.Username)
 	req.Admin.Email = strings.TrimSpace(req.Admin.Email)
-	if !usernameRe.MatchString(req.Admin.Username) || !strings.Contains(req.Admin.Email, "@") || len(req.Admin.Password) < 10 {
-		a.fail(w, http.StatusBadRequest, "用户名/邮箱/密码(≥10位)不符合要求")
+	if !usernameRe.MatchString(req.Admin.Username) || !strings.Contains(req.Admin.Email, "@") || len(req.Admin.Password) < 10 || len(req.Admin.Password) > auth.MaxPasswordBytes {
+		a.fail(w, http.StatusBadRequest, "用户名/邮箱/密码(10-128 字节)不符合要求")
 		return
 	}
 	if strings.TrimSpace(req.Site.Title) == "" {

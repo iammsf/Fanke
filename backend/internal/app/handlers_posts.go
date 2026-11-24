@@ -28,10 +28,14 @@ func routeSlug(r *http.Request) string {
 	return s
 }
 
-// visiblePost 未公开文章的可见性:已公开,或请求携带有效登录凭证(后台预览草稿)。
+// visiblePost 未公开文章的可见性:已公开,或请求携带有效登录凭证且具备该文章的编辑权限(管理员或作者本人)。
 // 不能信任 X-Fanke-Internal 之类的自定义头——任何 HTTP 客户端都能伪造。
 func visiblePost(r *http.Request, p *repo.Post) bool {
-	return p.IsPublic || currentUser(r).ID != 0
+	if p.IsPublic {
+		return true
+	}
+	u := currentUser(r)
+	return u.ID != 0 && canEditPost(u, p.AuthorID)
 }
 
 func (a *App) defaultCovers(ctx context.Context) map[string]string {
@@ -121,7 +125,7 @@ func (a *App) ListPostsPublic(w http.ResponseWriter, r *http.Request) {
 	if hs.Order == "asc" {
 		q.SortOrder = "asc"
 	}
-	a.renderPostList(w, r, q)
+	a.renderPostList(w, r, q, true)
 }
 
 func (a *App) ListPostsAdmin(w http.ResponseWriter, r *http.Request) {
@@ -130,7 +134,7 @@ func (a *App) ListPostsAdmin(w http.ResponseWriter, r *http.Request) {
 	if u := currentUser(r); u.Role != "admin" {
 		q.AuthorID = u.ID
 	}
-	a.renderPostList(w, r, q)
+	a.renderPostList(w, r, q, false)
 }
 
 func parsePostQuery(r *http.Request, status string) repo.PostQuery {
@@ -140,7 +144,7 @@ func parsePostQuery(r *http.Request, status string) repo.PostQuery {
 	return repo.PostQuery{Status: status, PublicOnly: true, Tag: u.Get("tag"), Category: u.Get("category"), Q: u.Get("q"), Page: page, Per: per}
 }
 
-func (a *App) renderPostList(w http.ResponseWriter, r *http.Request, q repo.PostQuery) {
+func (a *App) renderPostList(w http.ResponseWriter, r *http.Request, q repo.PostQuery, cacheable bool) {
 	items, total, err := a.DB.ListPosts(r.Context(), q)
 	if err != nil {
 		a.failInternal(w, r, "list posts", err)
@@ -156,7 +160,13 @@ func (a *App) renderPostList(w http.ResponseWriter, r *http.Request, q repo.Post
 			coverOrDefault(&items[i], def)
 		}
 	}
-	writeJSONCached(w, r, http.StatusOK, map[string]any{"items": items, "total": total, "page": q.Page, "per": q.Per})
+	payload := map[string]any{"items": items, "total": total, "page": q.Page, "per": q.Per}
+	if cacheable {
+		writeJSONCached(w, r, http.StatusOK, payload)
+		return
+	}
+	// 管理端文章列表含私密草稿且按角色隔离,禁止覆盖为 public 缓存。
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (a *App) GetPost(w http.ResponseWriter, r *http.Request) {

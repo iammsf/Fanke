@@ -6,6 +6,21 @@ const TOKEN_KEY = 'fanke_access'
 // 并发共享同一个 refresh 请求,避免轮换互相作废
 let refreshPromise: Promise<boolean> | null = null
 
+// 解码 JWT 的 exp,判断是否已过期(或即将过期);按 RFC 7519 标准做 Base64URL 解码
+export function isTokenExpired(token: string, slackSec = 30): boolean {
+  try {
+    const parts = token.split('.')
+    if (parts.length !== 3) return false // 非 JWT 无法判断,交给后端
+    const raw = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    const b64 = raw.padEnd(Math.ceil(raw.length / 4) * 4, '=')
+    const payload = JSON.parse(atob(b64))
+    if (!payload.exp) return false
+    return payload.exp * 1000 < Date.now() + slackSec * 1000
+  } catch {
+    return false
+  }
+}
+
 export function useAuth() {
   const base = (useRuntimeConfig().public.apiBase || '/api/v1').replace(/\/+$/, '')
   const token = useState<string | null>('fanke_access', () => null)
@@ -35,6 +50,7 @@ export function useAuth() {
         method: 'POST',
         headers: { 'X-Requested-With': 'fanke' },
         credentials: 'same-origin',
+        cache: 'no-store',
       })
       if (!res.ok) return false
       const j = await res.json()
@@ -55,8 +71,8 @@ export function useAuth() {
     return refreshPromise
   }
 
-  // 核心请求:带 Bearer;401 时 refresh 后重试一次
-  async function api<T = unknown>(path: string, init: RequestInit = {}, allowRetry = true): Promise<T> {
+  // 带 Bearer + 禁缓存 + 401 自动换票重试一次的原始 fetch(供 JSON 接口与二进制下载共用)
+  async function fetchAuth(path: string, init: RequestInit = {}, allowRetry = true): Promise<Response> {
     const t = getToken()
     const headers = new Headers(init.headers)
     if (t) headers.set('Authorization', `Bearer ${t}`)
@@ -65,16 +81,27 @@ export function useAuth() {
     }
     let res: Response
     try {
-      res = await fetch(base + path, { ...init, headers, credentials: 'same-origin' })
+      res = await fetch(base + path, {
+        cache: 'no-store',
+        ...init,
+        headers,
+        credentials: 'same-origin',
+      })
     } catch {
       throw Object.assign(new Error('网络错误,无法连接服务器'), { status: 0 })
     }
     if (res.status === 401 && allowRetry) {
-      if (await tryRefresh()) return api<T>(path, init, false)
+      if (await tryRefresh()) return fetchAuth(path, init, false)
       clearToken()
       gotoLogin()
       throw Object.assign(new Error('未登录或登录已过期'), { status: 401 })
     }
+    return res
+  }
+
+  // 核心请求:带 Bearer;401 时 refresh 后重试一次
+  async function api<T = unknown>(path: string, init: RequestInit = {}, allowRetry = true): Promise<T> {
+    const res = await fetchAuth(path, init, allowRetry)
     if (res.status === 204) return undefined as T
     const text = await res.text()
     let data: any = null
@@ -103,6 +130,7 @@ export function useAuth() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
+      cache: 'no-store',
       body: JSON.stringify({ identifier, password }),
     })
     const j = await res.json().catch(() => ({}))
@@ -118,19 +146,6 @@ export function useAuth() {
     setToken(j.access_token)
   }
 
-  // 解码 JWT 的 exp,判断是否已过期(或即将过期)
-  function isTokenExpired(token: string, slackSec = 30): boolean {
-    try {
-      const parts = token.split('.')
-      if (parts.length !== 3) return false // 非 JWT 无法判断,交给后端
-      const payload = JSON.parse(atob(parts[1]))
-      if (!payload.exp) return false
-      return payload.exp * 1000 < Date.now() + slackSec * 1000
-    } catch {
-      return false
-    }
-  }
-
   // 有有效 token 或能 refresh 即视为已登录;token 过期时主动 refresh,避免首个请求就 401
   async function ensureAuth(): Promise<boolean> {
     const t = getToken()
@@ -139,22 +154,51 @@ export function useAuth() {
     return false
   }
 
+  function clearAdminState() {
+    useState('admin_me').value = null
+    useState('fanke_media_contributions').value = null
+    useState('fanke_media_contributions_loaded').value = false
+    useState('fanke_media_upload_target').value = 'local'
+    useState('fanke_editor_panels').value = []
+    useState('fanke_editor_panels_loaded').value = false
+    useState('fanke_editor_nodes').value = {}
+    useState('fanke_editor_loading').value = false
+    useState('fanke_editor_loaded').value = false
+  }
+
   async function logout(): Promise<void> {
     const t = getToken()
+    const headers: Record<string, string> = { 'X-Requested-With': 'fanke' }
+    if (t) headers.Authorization = `Bearer ${t}`
     try {
       await fetch(`${base}/auth/logout`, {
         method: 'POST',
-        headers: t ? { Authorization: `Bearer ${t}` } : {},
+        headers,
         credentials: 'same-origin',
+        cache: 'no-store',
       })
     } catch {
       /* 忽略网络错误,本地照常退出 */
     }
     clearToken()
-    // 清掉共享的后台用户缓存,避免换号登录后短暂显示上一个账号
-    useState('admin_me').value = null
+    // 清掉共享的后台用户与插件贡献缓存,避免同标签页换号登录后残留上一个账号状态
+    clearAdminState()
     gotoLogin()
   }
 
-  return { token, getToken, setToken, clearToken, tryRefresh, api, login, ensureAuth, logout, gotoLogin, apiBase: base }
+  return {
+    token,
+    getToken,
+    setToken,
+    clearToken,
+    tryRefresh,
+    isTokenExpired,
+    fetchAuth,
+    api,
+    login,
+    ensureAuth,
+    logout,
+    gotoLogin,
+    apiBase: base,
+  }
 }

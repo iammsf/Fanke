@@ -6,7 +6,7 @@ import type { MediaItem, Page } from '~/types'
 const props = withDefaults(defineProps<{ mode?: 'manage' | 'pick'; pageSize?: number }>(), { mode: 'manage', pageSize: 24 })
 const emit = defineEmits<{ pick: [media: MediaItem]; deleted: [] }>()
 
-const { api, getToken, apiBase } = useAuth()
+const { api, fetchAuth } = useAuth()
 const { push } = useToast()
 const { run } = useBusy() // 与 DB/存储交互期间的全屏加载遮罩(兼防连点)
 const { isEnabled, refreshPublic, loaded, contributions, contributionsLoaded, refreshContributions } = useExtensions()
@@ -78,17 +78,23 @@ const loading = ref(true)
 const error = ref<any>(null)
 const selected = ref<Set<number>>(new Set())
 
+let loadSeq = 0
+
 const load = async () => {
   // pick 模式下,网格尚无有效尺寸(cols/rows 为 0)时不请求,等对话框打开后 ResizeObserver 算出尺寸再加载
   if (props.mode === 'pick' && PER.value === 0) return
+  const my = ++loadSeq
   loading.value = true
   error.value = null
   try {
-    data.value = await api<Page<MediaItem>>(`/admin/media?per=${PER.value}&page=${page.value}`)
+    const res = await api<Page<MediaItem>>(`/admin/media?per=${PER.value}&page=${page.value}`)
+    if (my !== loadSeq) return
+    data.value = res
   } catch (e: any) {
+    if (my !== loadSeq) return
     error.value = e
   } finally {
-    loading.value = false
+    if (my === loadSeq) loading.value = false
   }
 }
 onMounted(load)
@@ -180,14 +186,11 @@ const batchTransfer = async () => {
 
 const batchDownload = async () => {
   if (!selected.value.size) return
-  const t = getToken()
-  if (!t) { push('未登录', false); return }
   try {
     const ids = Array.from(selected.value)
     const blob = await run('打包下载中…', async () => {
-      const res = await fetch(`${apiBase}/admin/media/batch-download`, {
+      const res = await fetchAuth('/admin/media/batch-download', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids }),
       })
       if (!res.ok) throw new Error(`下载失败(${res.status})`)
@@ -200,7 +203,8 @@ const batchDownload = async () => {
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
-    URL.revokeObjectURL(url)
+    // 延迟释放 Blob URL,避免 Firefox/Safari 或大压缩包尚未读取即被吊销
+    setTimeout(() => URL.revokeObjectURL(url), 10_000)
   } catch (e: any) {
     push(e.message || '下载失败', false)
   }

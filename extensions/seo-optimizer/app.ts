@@ -31,6 +31,8 @@ let polishApplied = null
 let polishSource = ''
 
 const isPanel = new URLSearchParams(location.search).get('panel') === '1'
+const sameOrigin = location.origin && location.origin !== 'null' ? location.origin : ''
+const targetOrigin = sameOrigin || '*'
 
 function $(id) { return document.getElementById(id) }
 
@@ -321,7 +323,13 @@ function coarseDiffHtml(oldText, newText) {
   let j = 0
   while (j < oldText.length - i && j < newText.length - i &&
     oldText.charAt(oldText.length - 1 - j) === newText.charAt(newText.length - 1 - j)) j++
-  const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const esc = (s) =>
+    String(s || '')
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
   const prefix = oldText.slice(0, i)
   const oldMid = oldText.slice(i, oldText.length - j)
   const newMid = newText.slice(i, newText.length - j)
@@ -348,7 +356,7 @@ function applyPolish(text, row, btn) {
 
 function undoPolish() {
   if (!polishApplied) return
-  window.parent.postMessage({ type: 'fanke:editor:undo' }, location.origin)
+  window.parent.postMessage({ type: 'fanke:editor:undo' }, targetOrigin)
   resetPolishRow(polishApplied.row, polishApplied.btn)
   polishApplied = null
 }
@@ -552,12 +560,13 @@ function applyToEditor(payload, allowEmpty) {
   if (!isPanel) return
   const body = Object.assign({}, payload)
   if (allowEmpty) body.allow_empty = true
-  window.parent.postMessage({ type: 'fanke:editor:apply', payload: body }, location.origin)
+  window.parent.postMessage({ type: 'fanke:editor:apply', payload: body }, targetOrigin)
 }
 
 // ---------- 消息通道 ----------
 function onMessage(ev) {
-  if (ev.origin !== location.origin) return
+  if (ev.source !== window.parent) return
+  if (sameOrigin && ev.origin !== sameOrigin) return
   const d = ev.data
   if (!d || d.type !== 'fanke:editor:content' || !d.payload) return
   editorState = {

@@ -17,6 +17,28 @@ interface Window {
   var $ = function (id) { return document.getElementById(id) }
   var hook = function (name, payload) { return Fanke.callHook(name, payload || {}) }
   var toast = function (msg, ok) { Fanke.emit('toast', { message: msg, ok: ok !== false }) }
+  var sameOrigin = location.origin && location.origin !== 'null' ? location.origin : ''
+  var targetOrigin = sameOrigin || '*'
+  var confirmSeq = 0
+  var confirmPending = new Map()
+  window.addEventListener('message', function (ev) {
+    if (ev.source !== window.parent) return
+    if (sameOrigin && ev.origin !== sameOrigin) return
+    var d = ev.data
+    if (d && d.type === 'fanke:confirm:result' && confirmPending.has(d.id)) {
+      var done = confirmPending.get(d.id)
+      confirmPending.delete(d.id)
+      done(!!d.confirmed)
+    }
+  })
+  function askConfirm(message) {
+    if (window.parent === window) return Promise.resolve(confirm(message))
+    return new Promise(function (resolve) {
+      var id = 'focus-confirm-' + Date.now() + '-' + (++confirmSeq)
+      confirmPending.set(id, resolve)
+      window.parent.postMessage({ type: 'fanke:confirm', id: id, message: message }, targetOrigin)
+    })
+  }
 
   // ---------- 统计 ----------
   function refreshStats() {
@@ -69,10 +91,11 @@ interface Window {
     hook('store.export').then(function (d) {
       var blob = new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' })
       var a = document.createElement('a')
-      a.href = URL.createObjectURL(blob)
+      var blobUrl = URL.createObjectURL(blob)
+      a.href = blobUrl
       a.download = 'image-focus-export-' + new Date().toISOString().slice(0, 10) + '.json'
       a.click()
-      URL.revokeObjectURL(a.href)
+      setTimeout(function () { URL.revokeObjectURL(blobUrl) }, 10000)
       $('manageMsg').textContent = '已导出 ' + d.count + ' 条'
     }).catch(function (e) {
       $('manageMsg').textContent = '导出失败:' + e.message
@@ -242,18 +265,20 @@ interface Window {
 
   $('deleteBadBtn').addEventListener('click', function () {
     if (!badUrls.length) return
-    if (!confirm('确认删除 ' + badUrls.length + ' 条无效焦点记录?此操作不可恢复。')) return
     var btn = this
-    btn.disabled = true
-    hook('store.delete', { keys: badUrls }).then(function (d) {
-      $('checkMsg').textContent = '已删除 ' + d.deleted + ' 条'
-      $('badList').classList.add('hidden')
-      $('badActions').classList.add('hidden')
-      toast('已清理无效记录')
-      refreshStats()
-    }).catch(function (e) {
-      $('checkMsg').textContent = '删除失败:' + e.message
-    }).finally(function () { btn.disabled = false })
+    askConfirm('确认删除 ' + badUrls.length + ' 条无效焦点记录?此操作不可恢复。').then(function (ok) {
+      if (!ok) return
+      btn.disabled = true
+      hook('store.delete', { keys: badUrls }).then(function (d) {
+        $('checkMsg').textContent = '已删除 ' + d.deleted + ' 条'
+        $('badList').classList.add('hidden')
+        $('badActions').classList.add('hidden')
+        toast('已清理无效记录')
+        refreshStats()
+      }).catch(function (e) {
+        $('checkMsg').textContent = '删除失败:' + e.message
+      }).finally(function () { btn.disabled = false })
+    })
   })
   $('cancelBadBtn').addEventListener('click', function () {
     $('badList').classList.add('hidden')

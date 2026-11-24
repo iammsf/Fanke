@@ -199,6 +199,8 @@ func (a *App) BulkUsers(w http.ResponseWriter, r *http.Request) {
 				res.Failed = append(res.Failed, fmt.Sprintf("#%d: %v", id, err))
 				continue
 			}
+			_ = a.DB.RevokeUserSessions(ctx, id)
+			a.pwdCache.Delete(id)
 			res.OK++
 			changed = true
 		}

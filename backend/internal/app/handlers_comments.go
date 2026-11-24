@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"html"
 	"net/http"
 	"strconv"
 	"strings"
@@ -122,14 +123,14 @@ func (a *App) PostComment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, code, map[string]any{"id": id, "status": c.Status})
 }
 
-// toHTML 把纯文本评论转成安全段落(换行→p)。
+// toHTML 把纯文本评论转成安全段落(先做 HTML 转义再换行→p/br,阻止原始 HTML/CSS/外链图片注入)。
 func toHTML(text string) string {
 	parts := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n\n")
 	var b strings.Builder
 	for _, p := range parts {
 		if p = strings.TrimSpace(p); p != "" {
 			b.WriteString("<p>")
-			b.WriteString(strings.ReplaceAll(p, "\n", "<br>"))
+			b.WriteString(strings.ReplaceAll(html.EscapeString(p), "\n", "<br>"))
 			b.WriteString("</p>")
 		}
 	}

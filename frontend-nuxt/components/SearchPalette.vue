@@ -128,6 +128,11 @@ const onKey = (e: KeyboardEvent) => {
 }
 onMounted(() => window.addEventListener('keydown', onKey))
 onBeforeUnmount(() => {
+  if (timer) {
+    clearTimeout(timer)
+    timer = null
+  }
+  seq++
   window.removeEventListener('keydown', onKey)
   document.body.style.overflow = ''
 })

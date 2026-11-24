@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 插件详情页:上半区展示 info.json 字段(favicon 左、信息右),下半区 iframe 展示插件自带 index.html。
 // iframe 与父页通过 postMessage 桥通信:插件内 Fanke.callHook → 父页代发鉴权请求 → 结果回传。
-definePageMeta({ layout: 'admin', middleware: 'auth' })
+definePageMeta({ layout: 'admin', middleware: ['auth', 'admin'] })
 import type { Extension, ExtensionUpdateInfo } from '~/types'
 import { ElMessageBox } from 'element-plus'
 
@@ -23,6 +23,9 @@ const iframeKey = ref(0) // 变更强制重载
 const { inline: notices, show: showNotice, dismiss: dismissNotice } = usePluginNotify()
 // 会写库的 hook:仅这些在桥上套全屏遮罩(读类 hook 在插件页加载时即触发,不能套)
 const WRITE_HOOKS = new Set(['store.ensure_table', 'store.save', 'store.import', 'store.dedup', 'store.delete'])
+
+const safeExtUrl = computed(() => safeHref(ext.value?.url))
+const safeUpdatePageUrl = computed(() => safeHref(update.value?.page_url))
 
 const load = async () => {
   loading.value = true
@@ -57,7 +60,13 @@ const disconnectFrame = () => {
 const onFrameLoad = () => {
   disconnectFrame()
   const frame = iframeEl.value
-  const doc = frame?.contentDocument
+  let doc: Document | null = null
+  try {
+    doc = frame?.contentDocument ?? null
+  } catch {
+    // 无 allow-same-origin 时 iframe 为 opaque origin,无法直读 contentDocument,改由桥接脚本 fanke:resize 上报高度
+    doc = null
+  }
   if (!frame || !doc?.body) return
   const sizingStyle = doc.createElement('style')
   // 内嵌页面只负责内容布局，滚动交给宿主页；避免 100vh/min-height 反过来撑高 iframe。
@@ -89,7 +98,7 @@ const onFrameLoad = () => {
   doc.addEventListener('load', measure, true)
   window.addEventListener('resize', measure)
   removeFrameListeners = () => {
-    doc.removeEventListener('load', measure, true)
+    doc!.removeEventListener('load', measure, true)
     window.removeEventListener('resize', measure)
     sizingStyle.remove()
   }
@@ -114,11 +123,44 @@ const configRoutes: Record<string, Record<string, { path: string; method: string
 
 // ---------- postMessage 桥 ----------
 const onMessage = async (ev: MessageEvent) => {
-  // 同源校验 + 只处理来自本页 iframe 的消息
-  if (ev.origin !== location.origin) return
+  // 严格绑定消息来源为本页插件 iframe;沙箱去掉 allow-same-origin 后 ev.origin 为 'null'(opaque origin)
   if (!iframeEl.value || ev.source !== iframeEl.value.contentWindow) return
+  if (ev.origin !== 'null' && ev.origin !== location.origin) return
+  const replyOrigin = ev.origin && ev.origin !== 'null' ? ev.origin : '*'
   const d: any = ev.data
   if (!d || typeof d !== 'object') return
+
+  if (d.type === 'fanke:resize') {
+    const h = Number(d.height)
+    if (Number.isFinite(h) && h > 0) {
+      const clamped = Math.min(Math.max(200, Math.ceil(h) + 2), 20000)
+      if (iframeEl.value.style.height !== `${clamped}px`) {
+        iframeEl.value.style.height = `${clamped}px`
+      }
+    }
+    return
+  }
+
+  if (d.type === 'fanke:confirm') {
+    if (typeof d.id !== 'string') return
+    const source = ev.source as Window
+    const currentSlug = slug.value
+    let confirmed = false
+    try {
+      await ElMessageBox.confirm(
+        String(d.message || '确认执行此操作？').slice(0, 500),
+        String(d.title || '确认操作').slice(0, 60),
+        { type: 'warning', confirmButtonText: '确定', cancelButtonText: '取消' },
+      )
+      confirmed = true
+    } catch {
+      confirmed = false
+    }
+    if (iframeEl.value?.contentWindow === source && slug.value === currentSlug) {
+      source.postMessage({ type: 'fanke:confirm:result', id: d.id, confirmed }, replyOrigin)
+    }
+    return
+  }
 
   if (d.type === 'fanke:plugin-config') {
     if (typeof d.id !== 'string' || typeof d.action !== 'string') return
@@ -139,26 +181,30 @@ const onMessage = async (ev: MessageEvent) => {
       error = e.message || '配置操作失败'
     }
     if (iframeEl.value?.contentWindow === source && slug.value === currentSlug) {
-      source.postMessage({ type: 'fanke:plugin-config:result', id: d.id, result, error }, ev.origin)
+      source.postMessage({ type: 'fanke:plugin-config:result', id: d.id, result, error }, replyOrigin)
     }
     return
   }
 
   if (d.type === 'fanke:hook') {
     const { id, hook, payload } = d
+    const source = ev.source as Window
+    const currentSlug = slug.value
     // 建表属于有副作用的写操作,必须经用户同意才执行,避免插件未经授权创建数据表。
     if (hook === 'store.ensure_table') {
       try {
         await ElMessageBox.confirm(
-          `插件「${ext.value?.name || slug.value}」申请创建专属数据表(ext_data_${slug.value.replace(/-/g, '_')})。该表仅本插件可读写,用于存储其运行数据。是否允许?`,
+          `插件「${ext.value?.name || currentSlug}」申请创建专属数据表(ext_data_${currentSlug.replace(/-/g, '_')})。该表仅本插件可读写,用于存储其运行数据。是否允许?`,
           '插件数据权限申请',
           { type: 'warning', confirmButtonText: '允许并建表', cancelButtonText: '拒绝' },
         )
       } catch {
-        iframeEl.value.contentWindow?.postMessage(
-          { type: 'fanke:hook:result', id, ok: false, data: null, error: '用户拒绝建表' },
-          location.origin,
-        )
+        if (iframeEl.value?.contentWindow === source && slug.value === currentSlug) {
+          source.postMessage(
+            { type: 'fanke:hook:result', id, ok: false, data: null, error: '用户拒绝建表' },
+            replyOrigin,
+          )
+        }
         return
       }
     }
@@ -167,7 +213,7 @@ const onMessage = async (ev: MessageEvent) => {
     let errorMsg = ''
     try {
       const call = () => api<{ ok: boolean; data: any }>(
-        `/admin/extensions/${slug.value}/hook/${encodeURIComponent(hook)}`,
+        `/admin/extensions/${currentSlug}/hook/${encodeURIComponent(hook)}`,
         { method: 'POST', body: JSON.stringify(payload ?? {}) },
       )
       const res = WRITE_HOOKS.has(hook) ? await run('保存中…', call) : await call()
@@ -178,10 +224,12 @@ const onMessage = async (ev: MessageEvent) => {
       ok = false
       errorMsg = e.message || 'hook 调用失败'
     }
-    iframeEl.value.contentWindow?.postMessage(
-      { type: 'fanke:hook:result', id, ok, data, error: errorMsg },
-      location.origin,
-    )
+    if (iframeEl.value?.contentWindow === source && slug.value === currentSlug) {
+      source.postMessage(
+        { type: 'fanke:hook:result', id, ok, data, error: errorMsg },
+        replyOrigin,
+      )
+    }
     return
   }
 
@@ -337,7 +385,7 @@ useHead(() => ({ title: `${ext.value?.name || '插件'} · fanke 后台` }))
             <div><span class="k">发布日期</span>{{ ext.date }}</div>
             <div>
               <span class="k">作者主页</span>
-              <a v-if="ext.url" :href="ext.url" target="_blank" rel="noopener">{{ ext.url }}</a>
+              <a v-if="safeExtUrl" :href="safeExtUrl" target="_blank" rel="noopener noreferrer">{{ safeExtUrl }}</a>
               <span v-else class="muted">—</span>
             </div>
             <div><span class="k">安装时间</span>{{ fmtDateTime(ext.installed_at) }}</div>
@@ -351,8 +399,8 @@ useHead(() => ({ title: `${ext.value?.name || '插件'} · fanke 后台` }))
           <div v-if="update" class="muted" style="font-size: 13px">
             <template v-if="update.has_update">
               远端版本 {{ update.version }}<span v-if="update.date">({{ update.date }})</span>
-              <template v-if="update.page_url">
-                · <a :href="update.page_url" target="_blank" rel="noopener">打开发布页</a>
+              <template v-if="safeUpdatePageUrl">
+                · <a :href="safeUpdatePageUrl" target="_blank" rel="noopener noreferrer">打开发布页</a>
               </template>
             </template>
             <template v-else>已是最新版本</template>
@@ -399,7 +447,7 @@ useHead(() => ({ title: `${ext.value?.name || '插件'} · fanke 后台` }))
           ref="iframeEl"
           :src="iframeSrc"
           class="frame"
-          sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"
+          sandbox="allow-scripts allow-forms allow-downloads"
           title="插件页面"
           @load="onFrameLoad"
         />
@@ -487,7 +535,8 @@ useHead(() => ({ title: `${ext.value?.name || '插件'} · fanke 后台` }))
 .frame {
   display: block;
   width: 100%;
-  height: 1px;
+  min-height: 520px;
+  height: 680px;
   border: 0;
   background: #fff;
   border-radius: inherit;

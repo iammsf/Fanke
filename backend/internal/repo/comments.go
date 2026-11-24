@@ -9,9 +9,9 @@ import (
 
 func (db *DB) CommentPostBySlug(ctx context.Context, slug string) (*Post, error) {
 	out := &Post{}
-	err := db.QueryRow(ctx, `SELECT id, status, is_public, allow_comments
+	err := db.QueryRow(ctx, `SELECT id, author_id, status, is_public, allow_comments
 		FROM posts WHERE slug=$1 AND status='published'`, slug).
-		Scan(&out.ID, &out.Status, &out.IsPublic, &out.AllowComments)
+		Scan(&out.ID, &out.AuthorID, &out.Status, &out.IsPublic, &out.AllowComments)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}

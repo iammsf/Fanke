@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 通用编辑器插件面板宿主:后端只告诉有哪些插件声明了 addEditorPanel,
 // 具体 UI 与逻辑全在插件 index.html?panel=1 内,通过 postMessage 与宿主通信。
+import { ElMessageBox } from 'element-plus'
 import type { EditorPanel } from '~/composables/useEditorPanels'
 
 const props = defineProps<{
@@ -44,6 +45,7 @@ const openPanel = (panel: EditorPanel) => {
 const sendContent = () => {
   const win = iframeEl.value?.contentWindow
   if (!win) return
+  // 沙箱 iframe 移除 allow-same-origin 后拥有 opaque origin ('null'),发往它需使用 '*'
   win.postMessage({
     type: 'fanke:editor:content',
     payload: {
@@ -53,25 +55,45 @@ const sendContent = () => {
       selection: props.selection || '',
       post_id: props.postId ?? null,
     },
-  }, location.origin)
+  }, '*')
 }
 
 watch([() => props.title, () => props.summary, () => props.content, () => props.selection], sendContent)
 
 const onMessage = async (ev: MessageEvent) => {
-  if (ev.origin !== location.origin) return
+  // 严格通过 ev.source === iframeEl.value.contentWindow 绑定来源;沙箱去 allow-same-origin 后 ev.origin 为 'null'
   if (!iframeEl.value || ev.source !== iframeEl.value.contentWindow) return
+  if (ev.origin !== 'null' && ev.origin !== location.origin) return
+  const replyOrigin = ev.origin && ev.origin !== 'null' ? ev.origin : '*'
   const d: any = ev.data
   if (!d || typeof d !== 'object' || !active.value) return
 
   if (d.type === 'fanke:hook') {
     const { id, hook, payload } = d
+    const source = ev.source as Window
+    const currentSlug = active.value.plugin_slug
+    const currentName = active.value.name || currentSlug
+    // 建表属于有副作用的写操作,必须经用户弹窗确认,防止面板模式下插件静默建表。
+    if (hook === 'store.ensure_table') {
+      try {
+        await ElMessageBox.confirm(
+          `插件「${currentName}」申请创建专属数据表(ext_data_${currentSlug.replace(/-/g, '_')})。该表仅本插件可读写,用于存储其运行数据。是否允许?`,
+          '插件数据权限申请',
+          { type: 'warning', confirmButtonText: '允许并建表', cancelButtonText: '拒绝' },
+        )
+      } catch {
+        if (iframeEl.value?.contentWindow === source && active.value?.plugin_slug === currentSlug) {
+          source.postMessage({ type: 'fanke:hook:result', id, ok: false, data: null, error: '用户拒绝建表' }, replyOrigin)
+        }
+        return
+      }
+    }
     let ok = true
     let data: any = null
     let errorMsg = ''
     try {
       const call = () => api<{ ok: boolean; data: any }>(
-        `/admin/extensions/${active.value!.plugin_slug}/hook/${encodeURIComponent(hook)}`,
+        `/admin/extensions/${currentSlug}/hook/${encodeURIComponent(hook)}`,
         { method: 'POST', body: JSON.stringify(payload ?? {}) },
       )
       const res = WRITE_HOOKS.has(hook) ? await run('保存中…', call) : await call()
@@ -82,7 +104,9 @@ const onMessage = async (ev: MessageEvent) => {
       ok = false
       errorMsg = e.message || 'hook 调用失败'
     }
-    iframeEl.value.contentWindow?.postMessage({ type: 'fanke:hook:result', id, ok, data, error: errorMsg }, location.origin)
+    if (iframeEl.value?.contentWindow === source && active.value?.plugin_slug === currentSlug) {
+      source.postMessage({ type: 'fanke:hook:result', id, ok, data, error: errorMsg }, replyOrigin)
+    }
     return
   }
 
@@ -150,6 +174,8 @@ onBeforeUnmount(() => window.removeEventListener('message', onMessage))
         ref="iframeEl"
         class="plugin-frame"
         :src="iframeSrc"
+        sandbox="allow-scripts allow-forms allow-downloads"
+        :title="active.name || '插件工具'"
         @load="sendContent"
       />
     </el-drawer>

@@ -80,19 +80,19 @@ const pageUrl = computed(() => {
 })
 const coverUrl = computed(() => post.value?.cover_url || '')
 
-useHead({
-  title: computed(() => (post.value ? `${post.value.title} · ${siteTitle.value}` : siteTitle.value)),
+useHead(() => ({
+  title: post.value ? `${post.value.title} · ${siteTitle.value}` : siteTitle.value,
   meta: [
-    { name: 'description', content: computed(() => post.value?.summary || '') },
+    { name: 'description', content: post.value?.summary || '' },
     // 社交平台不执行 JS,必须在能执行时把 OG 补上(分享卡片依赖它)
     { property: 'og:type', content: 'article' },
-    { property: 'og:title', content: computed(() => post.value?.title || siteTitle.value) },
-    { property: 'og:description', content: computed(() => post.value?.summary || '') },
-    { property: 'og:url', content: pageUrl },
+    { property: 'og:title', content: post.value?.title || siteTitle.value },
+    { property: 'og:description', content: post.value?.summary || '' },
+    { property: 'og:url', content: pageUrl.value },
     ...(coverUrl.value ? [{ property: 'og:image', content: coverUrl.value }] : []),
     { name: 'twitter:card', content: coverUrl.value ? 'summary_large_image' : 'summary' },
   ],
-})
+}))
 </script>
 
 <template>

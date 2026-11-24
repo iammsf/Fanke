@@ -402,6 +402,11 @@ func (a *App) CheckThemeUpdate(w http.ResponseWriter, r *http.Request) {
 
 // ApplyThemeUpdate 下载并安装主题更新包。
 func (a *App) ApplyThemeUpdate(w http.ResponseWriter, r *http.Request) {
+	if !a.updateMu.TryLock() {
+		a.fail(w, http.StatusConflict, "已有更新任务正在进行，请稍后重试")
+		return
+	}
+	defer a.updateMu.Unlock()
 	info, err := a.loadTheme(chi.URLParam(r, "slug"))
 	if err != nil {
 		a.fail(w, http.StatusNotFound, "主题不存在")

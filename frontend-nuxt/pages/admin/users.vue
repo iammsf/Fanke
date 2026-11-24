@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 用户管理:新建/编辑资料/重置密码/删除(仅管理员)
-definePageMeta({ layout: 'admin', middleware: 'auth' })
+definePageMeta({ layout: 'admin', middleware: ['auth', 'admin'] })
 import type { AdminUser } from '~/types'
 
 const { api } = useAuth()

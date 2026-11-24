@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 插件(扩展)管理:上传 .zip/.7z 安装、列表展示、启用/禁用/卸载/检查更新。
 // 样式先简单,后续再统一美化。
-definePageMeta({ layout: 'admin', middleware: 'auth' })
+definePageMeta({ layout: 'admin', middleware: ['auth', 'admin'] })
 import type { Extension, ExtensionUpdateInfo } from '~/types'
 import { ElMessageBox } from 'element-plus'
 

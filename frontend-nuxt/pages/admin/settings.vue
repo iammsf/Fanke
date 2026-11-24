@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 站点设置各分区独立保存，插件配置通过贡献入口进入详情页。
 // 主题管理:文章页 / 管理页分别选择,主题包 info.json 声明 targets。
-definePageMeta({ layout: 'admin', middleware: 'auth' })
+definePageMeta({ layout: 'admin', middleware: ['auth', 'admin'] })
 import type { MediaItem, NavItem, SiteSettings, ThemeInfo, ThemeUpdateInfo } from '~/types'
 import { ElMessageBox } from 'element-plus'
 

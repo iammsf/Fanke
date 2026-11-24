@@ -47,15 +47,19 @@ func (a *App) bearerAuth(next http.Handler) http.Handler {
 			a.fail(w, http.StatusUnauthorized, "invalid token")
 			return
 		}
-		// 改密后旧 access token 立即失效(签发时间早于密码修改时间)
-		if claims.IssuedAt != nil {
-			if changedAt, err := a.pwdChangedAt(r.Context(), claims.UserID); err == nil &&
-				changedAt != nil && claims.IssuedAt.Time.Before(*changedAt) {
-				a.fail(w, http.StatusUnauthorized, "token revoked by password change")
-				return
-			}
+		// 查库校验用户仍存在、获取实时角色并核对改密时间。
+		// 发生错误(如用户已删除返回 ErrNoRows)必须 fail-closed 返回 401,绝不放行。
+		role, changedAt, err := a.userAuthState(r.Context(), claims.UserID)
+		if err != nil {
+			a.fail(w, http.StatusUnauthorized, "invalid user session")
+			return
 		}
-		ctx := context.WithValue(r.Context(), userKey, authedUser{ID: claims.UserID, Role: claims.Role})
+		// 改密后旧 access token 立即失效(签发时间早于密码修改时间)
+		if changedAt != nil && (claims.IssuedAt == nil || claims.IssuedAt.Time.Before(*changedAt)) {
+			a.fail(w, http.StatusUnauthorized, "token revoked by password change")
+			return
+		}
+		ctx := context.WithValue(r.Context(), userKey, authedUser{ID: claims.UserID, Role: role})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -67,14 +71,11 @@ func (a *App) optionalBearer(next http.Handler) http.Handler {
 		h := r.Header.Get("Authorization")
 		if strings.HasPrefix(h, "Bearer ") {
 			if claims, err := a.Signer.Parse(strings.TrimPrefix(h, "Bearer ")); err == nil && claims.Subject == "access" {
-				// 与 bearerAuth 一致:改密/重置后的旧 token 不再具备草稿可见性。
-				revoked := false
-				if claims.IssuedAt != nil {
-					changedAt, err := a.pwdChangedAt(r.Context(), claims.UserID)
-					revoked = err != nil || (changedAt != nil && claims.IssuedAt.Time.Before(*changedAt))
-				}
+				// 与 bearerAuth 一致:用户被删或改密/降权后的旧 token 实时反映数据库状态。
+				role, changedAt, err := a.userAuthState(r.Context(), claims.UserID)
+				revoked := err != nil || (changedAt != nil && (claims.IssuedAt == nil || claims.IssuedAt.Time.Before(*changedAt)))
 				if !revoked {
-					r = r.WithContext(context.WithValue(r.Context(), userKey, authedUser{ID: claims.UserID, Role: claims.Role}))
+					r = r.WithContext(context.WithValue(r.Context(), userKey, authedUser{ID: claims.UserID, Role: role}))
 				}
 			}
 		}
@@ -108,23 +109,25 @@ func currentUser(r *http.Request) authedUser {
 	return v
 }
 
-// pwdChangedAt 读取用户改密时间,带 30 秒内存缓存。
+// userAuthState 读取用户当前角色与改密时间,带 30 秒内存缓存。
 // 否则每个鉴权请求都要多打一次数据库(公开接口除外,但管理端轮询很频繁)。
-func (a *App) pwdChangedAt(ctx context.Context, uid int64) (*time.Time, error) {
+func (a *App) userAuthState(ctx context.Context, uid int64) (string, *time.Time, error) {
 	if v, ok := a.pwdCache.Load(uid); ok {
 		if s, ok := v.(pwdStamp); ok && time.Since(s.at) < 30*time.Second {
-			return s.changed, nil
+			return s.role, s.changed, nil
 		}
 	}
+	var role string
 	var changed *time.Time
-	if err := a.DB.QueryRow(ctx, `SELECT pwd_changed_at FROM users WHERE id=$1`, uid).Scan(&changed); err != nil {
-		return nil, err
+	if err := a.DB.QueryRow(ctx, `SELECT role, pwd_changed_at FROM users WHERE id=$1`, uid).Scan(&role, &changed); err != nil {
+		return "", nil, err
 	}
-	a.pwdCache.Store(uid, pwdStamp{at: time.Now(), changed: changed})
-	return changed, nil
+	a.pwdCache.Store(uid, pwdStamp{at: time.Now(), role: role, changed: changed})
+	return role, changed, nil
 }
 
 type pwdStamp struct {
 	at      time.Time
+	role    string
 	changed *time.Time
 }

@@ -284,10 +284,17 @@ func (a *App) thumbClient() *http.Client {
 			}
 			return nil
 		}
-		client := &http.Client{Timeout: thumbFetchTO, CheckRedirect: check}
+		transport := &http.Transport{
+			Proxy:                 nil,
+			DialContext:           safeProbeDial,
+			MaxIdleConnsPerHost:   4,
+			IdleConnTimeout:       30 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 10 * time.Second,
+		}
 		if raw := strings.TrimSpace(os.Getenv("THUMB_FETCH_PROXY")); raw != "" {
 			if pu, err := url.Parse(raw); err == nil {
-				client.Transport = &http.Transport{
+				transport = &http.Transport{
 					Proxy:                 http.ProxyURL(pu),
 					MaxIdleConnsPerHost:   4,
 					IdleConnTimeout:       30 * time.Second,
@@ -296,7 +303,7 @@ func (a *App) thumbClient() *http.Client {
 				}
 			}
 		}
-		a.thumbHTTP = client
+		a.thumbHTTP = &http.Client{Timeout: thumbFetchTO, Transport: transport, CheckRedirect: check}
 	})
 	return a.thumbHTTP
 }

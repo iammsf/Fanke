@@ -3,9 +3,16 @@ package app
 import (
 	"net/http"
 	"strconv"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 )
+
+func validTermName(name string) bool {
+	n := utf8.RuneCountInString(name)
+	return n >= 1 && n <= 60 && !strings.ContainsAny(name, "\r\n\t\x00")
+}
 
 func (a *App) ListTerms(w http.ResponseWriter, r *http.Request) {
 	typ := r.URL.Query().Get("type")
@@ -29,12 +36,22 @@ type termReq struct {
 
 func (a *App) CreateTerm(w http.ResponseWriter, r *http.Request) {
 	var req termReq
-	if err := decodeJSON(r, &req); err != nil || req.Name == "" || (req.Type != "category" && req.Type != "tag") {
+	if err := decodeJSON(r, &req); err != nil || (req.Type != "category" && req.Type != "tag") {
 		a.fail(w, http.StatusBadRequest, "name and type required")
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	req.Slug = strings.TrimSpace(req.Slug)
+	if !validTermName(req.Name) {
+		a.fail(w, http.StatusBadRequest, "名称须为 1-60 个有效字符")
 		return
 	}
 	if req.Slug == "" {
 		req.Slug = req.Name
+	}
+	if !validSlug(req.Slug) {
+		a.fail(w, http.StatusBadRequest, "slug 含非法字符或超长")
+		return
 	}
 	id, err := a.DB.CreateTerm(r.Context(), req.Name, req.Slug, req.Type)
 	if err != nil {
@@ -55,8 +72,18 @@ func (a *App) UpdateTerm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req termReq
-	if err := decodeJSON(r, &req); err != nil || req.Name == "" || req.Slug == "" {
-		a.fail(w, http.StatusBadRequest, "name and slug required")
+	if err := decodeJSON(r, &req); err != nil {
+		a.fail(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	req.Slug = strings.TrimSpace(req.Slug)
+	if !validTermName(req.Name) {
+		a.fail(w, http.StatusBadRequest, "名称须为 1-60 个有效字符")
+		return
+	}
+	if !validSlug(req.Slug) {
+		a.fail(w, http.StatusBadRequest, "slug 含非法字符或超长")
 		return
 	}
 	if err := a.DB.UpdateTerm(r.Context(), id, req.Name, req.Slug); err != nil {

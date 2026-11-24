@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"fanke/backend/internal/netutil"
 	"fanke/backend/internal/repo"
 )
 
@@ -295,90 +296,21 @@ func hookMediaList(ctx context.Context, a *App, _ *repo.Extension, payload json.
 
 // ---------- http.check_url ----------
 
-// blockedProbeNets 明确禁止探测的 IPv6 特殊网段(IPv4 特殊段在 isForbiddenProbeIP 里逐字节判断)。
-var blockedProbeNets = func() []*net.IPNet {
-	cidrs := []string{
-		"2001:db8::/32", // 文档示例地址
-		"64:ff9b::/96",  // NAT64,可映射到内网 IPv4
-		"2001::/32",     // Teredo 隧道
-		"2002::/16",     // 6to4
-	}
-	out := make([]*net.IPNet, 0, len(cidrs))
-	for _, c := range cidrs {
-		if _, n, err := net.ParseCIDR(c); err == nil {
-			out = append(out, n)
-		}
-	}
-	return out
-}()
-
-// isForbiddenProbeIP 判断目标 IP 是否属于不应由服务端探测的地址:
-// 回环、私网、链路本地(含云元数据 169.254.169.254)、CGNAT、组播、保留段与 IPv6 特殊段。
+// isForbiddenProbeIP 统一委托 netutil.IsForbiddenIP 拦截回环/私网/云元数据/保留段。
 func isForbiddenProbeIP(ip net.IP) bool {
-	if ip == nil {
-		return true
-	}
-	if v4 := ip.To4(); v4 != nil {
-		switch {
-		case v4[0] == 0, v4[0] == 10, v4[0] == 127:
-			return true
-		case v4[0] == 169 && v4[1] == 254:
-			return true
-		case v4[0] == 172 && v4[1] >= 16 && v4[1] <= 31:
-			return true
-		case v4[0] == 192 && v4[1] == 168:
-			return true
-		case v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127: // 100.64/10 CGNAT
-			return true
-		case v4[0] == 192 && v4[1] == 0 && v4[2] <= 2: // 192.0.0/24、192.0.2/24 保留/文档
-			return true
-		case v4[0] == 198 && (v4[1] == 18 || v4[1] == 19): // 198.18/15 基准测试
-			return true
-		case v4[0] == 198 && v4[1] == 51 && v4[2] == 100: // 198.51.100/24 文档
-			return true
-		case v4[0] == 203 && v4[1] == 0 && v4[2] == 113: // 203.0.113/24 文档
-			return true
-		case v4[0] >= 224: // 组播 + 保留 + 广播
-			return true
-		}
-		return false
-	}
-	if ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsPrivate() {
-		return true
-	}
-	for _, n := range blockedProbeNets {
-		if n.Contains(ip) {
-			return true
-		}
-	}
-	// 仅放行全球单播 2000::/3,其余(含已废弃的 site-local)一律拒绝
-	return ip[0]&0xe0 != 0x20
+	return netutil.IsForbiddenIP(ip)
 }
+
+// safeDialContext 构建带私有地址白名单的安全拨号器(供 AI/探测/更新等统一复用)。
+func safeDialContext(allowlist string) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return netutil.SafeDialContext(allowlist)
+}
+
+var defaultSafeProbeDial = safeDialContext("")
 
 // safeProbeDial 在建立连接时校验解析出的真实 IP,防 DNS 重绑定绕过 URL 层检查。
 func safeProbeDial(ctx context.Context, network, addr string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, errors.New("目标地址非法")
-	}
-	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil || len(ips) == 0 {
-		return nil, errors.New("目标地址无法解析")
-	}
-	d := &net.Dialer{Timeout: 5 * time.Second}
-	var lastErr error = errors.New("目标地址不允许探测")
-	for _, ip := range ips {
-		if isForbiddenProbeIP(ip.IP) {
-			continue
-		}
-		conn, err := d.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
-		if err == nil {
-			return conn, nil
-		}
-		lastErr = err
-	}
-	return nil, lastErr
+	return defaultSafeProbeDial(ctx, network, addr)
 }
 
 // probeHTTPClient 服务端探测专用客户端:不走环境代理(避免绕过 IP 校验),

@@ -14,22 +14,38 @@ interface Window {
 // 逻辑与旧版 init/index.html 内联脚本保持一致，仅做类型化整理。
 
 (() => {
-  const origin = location.origin;
+  const sameOrigin = location.origin && location.origin !== 'null' ? location.origin : '';
+  const targetOrigin = sameOrigin || '*';
   const pending = new Map();
+  const confirmPending = new Map();
   let seq = 0;
   window.addEventListener('message', (event) => {
-    if (event.origin !== origin || event.source !== parent) return;
+    if (event.source !== parent) return;
+    if (sameOrigin && event.origin !== sameOrigin) return;
     const data = event.data;
+    if (data && data.type === 'fanke:confirm:result' && confirmPending.has(data.id)) {
+      const done = confirmPending.get(data.id); confirmPending.delete(data.id);
+      done(!!data.confirmed);
+      return;
+    }
     if (!data || data.type !== 'fanke:plugin-config:result' || !pending.has(data.id)) return;
     const item = pending.get(data.id); pending.delete(data.id); clearTimeout(item.timer);
     data.error ? item.reject(new Error(data.error)) : item.resolve(data.result);
   });
+  function askConfirm(message) {
+    if (parent === window) return Promise.resolve(confirm(message));
+    return new Promise((resolve) => {
+      const id = `s3-confirm-${Date.now()}-${++seq}`;
+      confirmPending.set(id, resolve);
+      parent.postMessage({ type: 'fanke:confirm', id, message }, targetOrigin);
+    });
+  }
   function call(action, payload) {
     return new Promise((resolve, reject) => {
       const id = `s3-${Date.now()}-${++seq}`;
       const timer = setTimeout(() => { pending.delete(id); reject(new Error('请求超时，请在后台插件详情页重试')); }, 30000);
       pending.set(id, { resolve, reject, timer });
-      parent.postMessage({ type: 'fanke:plugin-config', id, action, payload }, origin);
+      parent.postMessage({ type: 'fanke:plugin-config', id, action, payload }, targetOrigin);
     });
   }
   const container = document.getElementById('buckets');
@@ -45,7 +61,7 @@ interface Window {
       const header = document.createElement('div'); header.className = 'row toolbar';
       const title = document.createElement('h2'); title.textContent = `存储桶 ${index + 1}`;
       const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'danger'; remove.textContent = '移除';
-      remove.onclick = () => { if (!confirm('移除此桶配置？保存全部配置后生效，不会删除远端对象。')) return; buckets.splice(index, 1); if (defaultId === bucket.id) defaultId = ''; render(); };
+      remove.onclick = async () => { if (!(await askConfirm('移除此桶配置？保存全部配置后生效，不会删除远端对象。'))) return; const idx = buckets.indexOf(bucket); if (idx >= 0) buckets.splice(idx, 1); if (defaultId === bucket.id) defaultId = ''; render(); };
       header.append(title, remove); section.append(header);
       const toggles = document.createElement('div'); toggles.className = 'row';
       const enabledLabel = document.createElement('label'), enabled = document.createElement('input'); enabled.type = 'checkbox'; enabled.checked = bucket.enabled; enabled.onchange = () => { bucket.enabled = enabled.checked; if (!bucket.enabled && defaultId === bucket.id) defaultId = ''; render(); }; enabledLabel.append(enabled, ' 启用此桶');
@@ -99,7 +115,7 @@ interface Window {
     } catch (error) { status(error.message, true); document.getElementById('retry').hidden = false; throw error; }
   }
   document.getElementById('add').onclick = () => { buckets.push({ id: crypto.randomUUID(), alias: '', enabled: true, region: 'auto', force_path_style: true, savedKeys: new Set() }); render(); };
-  document.getElementById('reload').onclick = () => { if (confirm('重新读取将丢弃未保存修改，继续？')) load().catch(() => {}); };
+  document.getElementById('reload').onclick = async () => { if (await askConfirm('重新读取将丢弃未保存修改，继续？')) load().catch(() => {}); };
   document.getElementById('retry').onclick = () => load().catch(() => {});
   document.getElementById('config').onsubmit = (event) => {
     event.preventDefault(); operation(async () => {

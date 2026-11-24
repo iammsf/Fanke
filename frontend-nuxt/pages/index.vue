@@ -13,10 +13,14 @@ const loading = ref(true)
 const error = ref<any>(null)
 const page = computed(() => Math.max(1, Number(route.query.page) || 1))
 
+let seq = 0
+
 const fetchData = async () => {
+  const my = ++seq
   loading.value = true
   error.value = null
   const res = await api.posts({ page: page.value, per: 10 })
+  if (my !== seq) return
   if (res) data.value = res
   else error.value = new Error('加载失败')
   loading.value = false

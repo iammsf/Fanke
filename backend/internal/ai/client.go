@@ -8,12 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
+	"log"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"fanke/backend/internal/netutil"
 	"fanke/backend/internal/repo"
 )
 
@@ -23,7 +25,32 @@ type Client struct {
 }
 
 func NewClient(db *repo.DB) *Client {
-	return &Client{db: db, hc: &http.Client{Timeout: 60 * time.Second}}
+	return NewClientWithAllowlist(db, "")
+}
+
+// NewClientWithAllowlist 构建带内网 SSRF 防护的 AI 客户端:
+// 默认拦截回环/私网/云元数据 IP(含 3xx 重定向目标),仅显式命中 allowPrivateHosts 白名单时放行。
+func NewClientWithAllowlist(db *repo.DB, allowPrivateHosts string) *Client {
+	tr := &http.Transport{
+		Proxy:                 nil,
+		DialContext:           netutil.SafeDialContext(allowPrivateHosts),
+		MaxIdleConns:          32,
+		IdleConnTimeout:       60 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
+	}
+	hc := &http.Client{
+		Timeout:   60 * time.Second,
+		Transport: tr,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 4 {
+				return errors.New("too many redirects")
+			}
+			_, err := netutil.ValidateURL(req.URL.String(), allowPrivateHosts, false)
+			return err
+		},
+	}
+	return &Client{db: db, hc: hc}
 }
 
 type ChatRequest struct {
@@ -131,7 +158,7 @@ func weightedRandom(conns []repo.AIConnection) repo.AIConnection {
 	if total <= 0 {
 		return conns[0]
 	}
-	r := rand.Intn(total)
+	r := rand.IntN(total)
 	for _, c := range conns {
 		if c.Weight > 0 {
 			r -= c.Weight
@@ -175,7 +202,9 @@ func request(ctx context.Context, hc *http.Client, method, target string, body [
 }
 func responseError(provider string, resp *http.Response) error {
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	return fmt.Errorf("%s error %d: %s", provider, resp.StatusCode, strings.TrimSpace(string(b)))
+	// 原始上游错误响应体只写服务端日志,绝不原样返回给客户端(防内部网关信息/SSRF 响应回显)。
+	log.Printf("ai upstream error provider=%s status=%d body=%s", provider, resp.StatusCode, strings.TrimSpace(string(b)))
+	return fmt.Errorf("%s error %d", provider, resp.StatusCode)
 }
 
 func (c *Client) chatOpenAI(ctx context.Context, conn repo.AIConnection, req ChatRequest) (ChatResponse, error) {

@@ -9,6 +9,11 @@ name: release
 #
 # 注意:仓库 Settings → Actions → General 需允许 Workflow permissions 为
 # "Read and write permissions";若 main 有分支保护,请放行 github-actions[bot]。
+#
+# 安全隔离:
+#   1) test(contents: read):运行 Go vet 与竞态测试
+#   2) build(contents: read):运行 npm ci 与构建打包并上传 artifact,与写权限隔离
+#   3) publish(contents: write):仅下载 artifact 并发布 Release、更新 updates.json
 
 on:
   push:
@@ -20,24 +25,21 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-latest
   cancel-in-progress: false
 
 jobs:
-  release:
+  test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v4 # TODO: pin to 40-char commit SHA
 
-      - name: 计算构建版本号
-        run: echo "VERSION=$(date -u +%Y%m%d%H%M)" >> "$GITHUB_ENV"
-
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5 # TODO: pin to 40-char commit SHA
         with:
           go-version-file: backend/go.mod
           cache: true
@@ -45,7 +47,38 @@ jobs:
             backend/go.sum
             extensions/s3-storage/go.sum
 
-      - uses: actions/setup-node@v4
+      - name: 后端静态检查与竞态测试
+        working-directory: backend
+        run: |
+          go vet ./...
+          go test -race ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4 # TODO: pin to 40-char commit SHA
+
+      - name: 计算构建版本号
+        id: meta
+        run: |
+          ver="$(date -u +%Y%m%d%H%M)"
+          echo "VERSION=$ver" >> "$GITHUB_ENV"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v5 # TODO: pin to 40-char commit SHA
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: |
+            backend/go.sum
+            extensions/s3-storage/go.sum
+
+      - uses: actions/setup-node@v4 # TODO: pin to 40-char commit SHA
         with:
           node-version: '22'
           cache: npm
@@ -166,13 +199,53 @@ jobs:
           print('已生成 updates.json:', core['version'], list(plugins), list(themes))
           PY
 
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4 # TODO: pin to 40-char commit SHA
+        with:
+          name: release-files
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+
+      - name: 上传更新清单
+        uses: actions/upload-artifact@v4 # TODO: pin to 40-char commit SHA
+        with:
+          name: updates-manifest
+          retention-days: 1
+          if-no-files-found: error
+          path: updates.json
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4 # TODO: pin to 40-char commit SHA
+        with:
+          fetch-depth: 0
+
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4 # TODO: pin to 40-char commit SHA
+        with:
+          name: release-files
+          path: dist
+
+      - name: 下载更新清单
+        uses: actions/download-artifact@v4 # TODO: pin to 40-char commit SHA
+        with:
+          name: updates-manifest
+          path: .
+
       - name: 发布 latest
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v2 # TODO: pin to 40-char commit SHA
         with:
           tag_name: latest
           name: latest
           body: |
-            滚动发布,构建号 `${{ env.VERSION }}`。安装与在线升级始终取最新构建。
+            滚动发布,构建号 `${{ needs.build.outputs.version }}`。安装与在线升级始终取最新构建。
           make_latest: true
           files: |
             dist/*.tar.gz
@@ -236,10 +309,10 @@ jobs:
       - name: 提交更新清单到 main
         run: |
           set -euo pipefail
-          cp updates.json /tmp/updates.json
+          cp updates.json "$RUNNER_TEMP/updates.json"
           git fetch origin main
           git checkout -B main origin/main
-          cp /tmp/updates.json updates.json
+          cp "$RUNNER_TEMP/updates.json" updates.json
           if git diff --quiet -- updates.json; then
             echo "更新清单无变化"
             exit 0

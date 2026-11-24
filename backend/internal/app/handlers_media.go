@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	_ "golang.org/x/image/webp"
 	"fanke/backend/internal/media"
 	"fanke/backend/internal/repo"
 )
@@ -59,6 +60,7 @@ func hashUpload(f io.ReadSeeker, limit int64) (string, int64, error) {
 }
 
 var (
+	bitmapExts = map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webp": true}
 	imageExts  = map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webp": true, ".svg": true, ".avif": true}
 	videoExts  = map[string]bool{".mp4": true, ".webm": true, ".mov": true}
 	docExts    = map[string]bool{".pdf": true, ".zip": true, ".txt": true, ".md": true, ".csv": true}
@@ -203,6 +205,13 @@ func (a *App) UploadMedia(w http.ResponseWriter, r *http.Request) {
 			a.fail(w, http.StatusBadRequest, "读取上传图片失败")
 			return
 		}
+		// 声明为位图扩展名时强制校验图片魔数与头部尺寸,拒绝伪装成图片的 HTML/JS/ZIP 等载荷。
+		if bitmapExts[ext] {
+			if cfg, _, derr := image.DecodeConfig(bytes.NewReader(data)); derr != nil || cfg.Width <= 0 || cfg.Height <= 0 {
+				a.fail(w, http.StatusBadRequest, "图片内容无效或与扩展名不匹配")
+				return
+			}
+		}
 	}
 	store, cfg, err := a.pickStorage(r.Context(), r.FormValue("storage"))
 	if err != nil {
@@ -328,6 +337,14 @@ func (a *App) DeleteMedia(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func needsAttachmentSandbox(ext string) bool {
+	switch strings.ToLower(ext) {
+	case ".svg", ".pdf", ".zip", ".txt", ".md", ".csv":
+		return true
+	}
+	return false
+}
+
 func (a *App) ServeLocalMedia(w http.ResponseWriter, r *http.Request) {
 	key := chi.URLParam(r, "*")
 	rc, err := a.Local.Open(r.Context(), key)
@@ -338,6 +355,11 @@ func (a *App) ServeLocalMedia(w http.ResponseWriter, r *http.Request) {
 	defer rc.Close()
 	ext := strings.ToLower(path.Ext(key))
 	w.Header().Set("Content-Type", mimeOf(ext, ""))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if needsAttachmentSandbox(ext) {
+		w.Header().Set("Content-Disposition", "attachment")
+		w.Header().Set("Content-Security-Policy", "sandbox")
+	}
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	_, _ = io.Copy(w, rc)
 }

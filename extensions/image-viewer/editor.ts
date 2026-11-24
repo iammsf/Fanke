@@ -18,13 +18,54 @@ interface Window {
     String(s || '')
       .replace(/&/g, '&amp;')
       .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
 
-  // des_sty 令牌解析（与前台 useImageViewer.parseDesSty 保持一致）
+  const RE_NUM = /^\d+(\.\d+)?$/
+  const RE_COLOR = /^(#[0-9a-fA-F]{3,8}|rgba?\([\d\s,.%]+\)|[a-zA-Z]{1,20})$/
+  const RE_UNSAFE_PROTO = /^\s*(?:javascript|vbscript):/i
+
+  const safeNum = (v: unknown): string => {
+    const s = String(v ?? '').trim()
+    if (!s || !RE_NUM.test(s)) return ''
+    const n = Number(s)
+    return Number.isFinite(n) ? s : ''
+  }
+
+  const safeColor = (v: unknown): string => {
+    const s = String(v ?? '').trim()
+    return RE_COLOR.test(s) ? s : ''
+  }
+
+  const splitStyleTokens = (sty: string): string[] => {
+    const out: string[] = []
+    let cur = ''
+    let depth = 0
+    for (const ch of String(sty || '')) {
+      if (ch === '(') {
+        depth++
+        cur += ch
+      } else if (ch === ')') {
+        if (depth > 0) depth--
+        cur += ch
+      } else if (depth === 0 && /[\s,;]/.test(ch)) {
+        if (cur) {
+          out.push(cur)
+          cur = ''
+        }
+      } else {
+        cur += ch
+      }
+    }
+    if (cur) out.push(cur)
+    return out
+  }
+
+  // des_sty 令牌解析（与前台 useImageViewer.parseDesSty 保持一致，强校验数值与颜色白名单）
   function parseSty(sty: string) {
     const o: any = {}
-    for (const tok of String(sty || '').split(/[,\s;]+/)) {
+    for (const tok of splitStyleTokens(sty)) {
       if (!tok) continue
       if (tok === 'hidden') o.hidden = true
       else if (tok === 'b') o.bold = true
@@ -34,12 +75,25 @@ interface Window {
         if (i < 1) continue
         const k = tok.slice(0, i)
         const v = tok.slice(i + 1)
-        if (k === 'fs') o.fs = v
-        else if (k === 'c') o.c = v
-        else if (k === 'bg') o.bg = v
-        else if (k === 'bd') o.bd = v
-        else if (k === 'w') o.w = v
-        else if (k === 'r') o.r = v
+        if (k === 'fs') {
+          const n = safeNum(v)
+          if (n) o.fs = n
+        } else if (k === 'c') {
+          const c = safeColor(v)
+          if (c) o.c = c
+        } else if (k === 'bg') {
+          const c = safeColor(v)
+          if (c) o.bg = c
+        } else if (k === 'bd') {
+          const c = safeColor(v)
+          if (c) o.bd = c
+        } else if (k === 'w') {
+          const n = safeNum(v)
+          if (n) o.w = n
+        } else if (k === 'r') {
+          const n = safeNum(v)
+          if (n) o.r = n
+        }
       }
     }
     return o
@@ -50,42 +104,57 @@ interface Window {
     if (v.hidden) out.push('hidden')
     if (v.bold) out.push('b')
     if (v.italic) out.push('i')
-    if (v.fs) out.push(`fs=${v.fs}`)
-    if (v.color) out.push(`c=${v.color}`)
-    if (v.bg) out.push(`bg=${v.bg}`)
-    if (v.bd) out.push(`bd=${v.bd}`)
-    if (v.w) out.push(`w=${v.w}`)
-    if (v.r) out.push(`r=${v.r}`)
+    const fs = safeNum(v.fs)
+    const color = safeColor(v.color)
+    const bg = safeColor(v.bg)
+    const bd = safeColor(v.bd)
+    const w = safeNum(v.w)
+    const r = safeNum(v.r)
+    if (fs) out.push(`fs=${fs}`)
+    if (color) out.push(`c=${color}`)
+    if (bg) out.push(`bg=${bg}`)
+    if (bd) out.push(`bd=${bd}`)
+    if (w) out.push(`w=${w}`)
+    if (r) out.push(`r=${r}`)
     return out.join(' ')
   }
 
   function render(attrs: Record<string, string>, caption: string) {
-    const src = attrOf(attrs, 'src')
+    const rawSrc = attrOf(attrs, 'src').trim()
+    const src = rawSrc && !RE_UNSAFE_PROTO.test(rawSrc) ? rawSrc : ''
     const desPos = (attrOf(attrs, 'des_pos') || 'middle bottom').toLowerCase()
     const sty = parseSty(attrOf(attrs, 'des_sty'))
     const vertTop = desPos.indexOf('top') >= 0
     const align = desPos.indexOf('left') >= 0 ? 'left' : desPos.indexOf('right') >= 0 ? 'right' : 'center'
     // 历史标签可能把图注写在 des 属性里，这里统一收敛成 figcaption 文本。
     const text = (caption || '').trim() || attrOf(attrs, 'des') || attrOf(attrs, 'alt')
+    const fs = safeNum(sty.fs)
+    const c = safeColor(sty.c) || '#909399'
+    const bg = safeColor(sty.bg)
+    const bd = safeColor(sty.bd)
+    const w = safeNum(sty.w)
+    const r = safeNum(sty.r) || '8'
+
     const capStyle = [
-      `font-size:${sty.fs ? sty.fs + 'px' : '13.5px'}`,
-      `color:${sty.c || '#909399'}`,
+      `font-size:${fs ? fs + 'px' : '13.5px'}`,
+      `color:${c}`,
       'padding:6px 2px',
       'line-height:1.5',
       `text-align:${align}`,
       sty.bold ? 'font-weight:700' : '',
       sty.italic ? 'font-style:italic' : '',
-      sty.bg ? 'background:' + sty.bg : '',
-      sty.bd ? 'border:1px solid ' + sty.bd : '',
+      bg ? 'background:' + bg : '',
+      bd ? 'border:1px solid ' + bd : '',
       sty.hidden ? 'display:none' : '',
     ]
       .filter(Boolean)
       .join(';')
-    const figStyle = `margin:18px 0;max-width:100%${sty.w ? ';width:' + sty.w + '%' : ''}`
+    const figStyle = `margin:18px 0;max-width:100%${w ? ';width:' + w + '%' : ''}`
+    const imgStyle = `display:block;width:100%;border-radius:${r}px`
     const img = src
-      ? `<img src="${esc(src)}" alt="${esc(text)}" style="display:block;width:100%;border-radius:${sty.r || 8}px">`
+      ? `<img src="${esc(src)}" alt="${esc(text)}" style="${esc(imgStyle)}">`
       : '<span class="fanke-ph" style="display:block;padding:40px 0;border:1px dashed #c0c4cc;border-radius:8px;color:#909399;text-align:center">点击设置图片</span>'
-    const cap = `<figcaption style="${capStyle}">${esc(text)}</figcaption>`
+    const cap = `<figcaption style="${esc(capStyle)}">${esc(text)}</figcaption>`
     const body = vertTop ? cap + img : img + cap
     const dp = attrOf(attrs, 'des_pos')
     const ds = attrOf(attrs, 'des_sty')
@@ -93,7 +162,7 @@ interface Window {
       `<figure data-fanke-node="fanke-img"` +
       (dp ? ` des_pos="${esc(dp)}"` : '') +
       (ds ? ` des_sty="${esc(ds)}"` : '') +
-      ` style="${figStyle}">${body}</figure>`
+      ` style="${esc(figStyle)}">${body}</figure>`
     )
   }
 

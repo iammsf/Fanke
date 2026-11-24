@@ -23,8 +23,9 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"fanke/backend/internal/media"
-	"fanke/backend/internal/repo"
+	"fanke/backend/internal/netutil"
 	"fanke/backend/internal/render"
+	"fanke/backend/internal/repo"
 )
 
 type Options struct {
@@ -56,7 +57,16 @@ type Runner struct {
 }
 
 func New(db *repo.DB, opt Options) *Runner {
-	return &Runner{db: db, opt: opt, h: &http.Client{Timeout: 60 * time.Second}}
+	hc := &http.Client{
+		Timeout: 60 * time.Second,
+		Transport: &http.Transport{
+			Proxy:                 nil,
+			DialContext:           netutil.SafeDialContext(""),
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
+		},
+	}
+	return &Runner{db: db, opt: opt, h: hc}
 }
 
 func (r *Runner) Run(ctx context.Context) (*Report, error) {
@@ -347,19 +357,40 @@ func (r *Runner) fetchBytes(ctx context.Context, url string) ([]byte, error) {
 	return nil, fmt.Errorf("status %d", status)
 }
 
+// safeLocalFilePath 将 URL 路径安全解析到 LocalRoot 目录内,彻底防止 .. 与同前缀目录逃逸。
+func safeLocalFilePath(localRoot, urlPath string) (string, error) {
+	decoded, err := neturl.PathUnescape(urlPath)
+	if err != nil {
+		return "", fmt.Errorf("invalid path")
+	}
+	if strings.ContainsAny(decoded, "\x00\\") {
+		return "", fmt.Errorf("path escape")
+	}
+	rootAbs, err := filepath.Abs(filepath.Clean(localRoot))
+	if err != nil {
+		return "", fmt.Errorf("path escape")
+	}
+	rel := filepath.Clean(filepath.FromSlash(strings.TrimPrefix(decoded, "/")))
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("path escape")
+	}
+	fp := filepath.Join(rootAbs, rel)
+	if !strings.HasPrefix(fp, rootAbs+string(filepath.Separator)) {
+		return "", fmt.Errorf("path escape")
+	}
+	return fp, nil
+}
+
 func (r *Runner) httpGet(ctx context.Context, url string) ([]byte, int, error) {
 	// 本地根目录优先:URL 路径映射到磁盘文件
 	if r.opt.LocalRoot != "" {
 		if p := strings.TrimPrefix(url, r.opt.SiteBase); strings.HasPrefix(p, "/") {
-			decoded, err := neturl.PathUnescape(p)
-			if err == nil {
-			 fp := r.opt.LocalRoot + decoded
-				if !strings.HasPrefix(fp, r.opt.LocalRoot) {
-					return nil, 0, fmt.Errorf("path escape")
-				}
-				if b, err := os.ReadFile(fp); err == nil {
-					return b, 200, nil
-				}
+			fp, err := safeLocalFilePath(r.opt.LocalRoot, p)
+			if err != nil {
+				return nil, 0, err
+			}
+			if b, err := os.ReadFile(fp); err == nil {
+				return b, 200, nil
 			}
 		}
 	}

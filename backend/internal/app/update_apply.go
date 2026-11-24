@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"fanke/backend/internal/netutil"
 )
 
 const (
@@ -25,7 +27,7 @@ const (
 	updateFileMax    = 5000      // 包内文件数上限
 )
 
-// updateHTTPClient 下载升级包专用:不走环境代理,连接阶段拦截内网,重定向逐跳校验。
+// updateHTTPClient 下载升级包专用:不走环境代理,连接阶段拦截内网,重定向逐跳校验 validUpdateURL(默认强制 https://)。
 var updateHTTPClient = &http.Client{
 	Timeout: 15 * time.Minute,
 	Transport: &http.Transport{
@@ -34,7 +36,12 @@ var updateHTTPClient = &http.Client{
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
 	},
-	CheckRedirect: probeHTTPClient.CheckRedirect,
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= maxUpdateRedirects {
+			return errors.New("重定向次数过多")
+		}
+		return validUpdateURL(req.URL.String())
+	},
 }
 
 // updateTargets 解析安装目录与前端静态目录。
@@ -151,11 +158,13 @@ func (a *App) applyCoreUpdate(ctx context.Context, m *updateManifest) (map[strin
 // downloadToFile 下载到文件并返回实际字节的 sha256(hex)。
 // 优先用 curl:国内服务器直连 github.com 常超时,但系统 curl 可走本地代理。
 func downloadToFile(ctx context.Context, url, dest string) (string, error) {
-	if err := validProbeURL(url); err != nil {
+	if err := validUpdateURL(url); err != nil {
 		return "", err
 	}
 	if err := curlToFile(ctx, url, dest, updateArchiveMax); err == nil {
 		return fileSHA256(dest)
+	} else if errors.Is(err, netutil.ErrForbiddenAddress) {
+		return "", err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -321,21 +330,123 @@ func installBackend(appDir, newAPI string) error {
 	return nil
 }
 
-// replaceWebRoot 用新构建的前端覆盖 WEB_ROOT(只清理该目录内部)。
+// replaceWebRoot 原子替换前端目录并支持失败回滚:
+// 优先在父目录(同文件系统)创建临时目录拷贝完整文件后 rename 交换;
+// 若父目录受 systemd ReadWritePaths 限制只读,则退回目录内先拷完整临时目录再逐项切换并回滚,
+// 确保拷贝失败时线上前端绝不被清空。
 func replaceWebRoot(src, dst string) error {
+	dst = filepath.Clean(dst)
+	if dst == "" || dst == "." || dst == string(filepath.Separator) {
+		return errors.New("WEB_ROOT 非法")
+	}
+	parent := filepath.Dir(dst)
+	base := filepath.Base(dst)
+	stage, err := os.MkdirTemp(parent, "."+base+".new-*")
+	if err == nil {
+		cleanupStage := true
+		defer func() {
+			if cleanupStage {
+				_ = os.RemoveAll(stage)
+			}
+		}()
+		if err := os.Chmod(stage, 0o755); err != nil {
+			return err
+		}
+		if err := copyTree(src, stage); err != nil {
+			return err
+		}
+		backup := filepath.Join(parent, "."+base+".bak-"+time.Now().Format("20060102-150405.000"))
+		hadOld := false
+		if _, err := os.Stat(dst); err == nil {
+			if err := os.Rename(dst, backup); err != nil {
+				// 父目录或 dst 本身为挂载点导致无法直接 rename 时,降级为目录内安全切换。
+				_ = os.RemoveAll(stage)
+				cleanupStage = false
+				return replaceWebRootInPlace(src, dst)
+			}
+			hadOld = true
+		}
+		if err := os.Rename(stage, dst); err != nil {
+			if hadOld {
+				_ = os.Rename(backup, dst)
+			}
+			return err
+		}
+		cleanupStage = false
+		if hadOld {
+			_ = os.RemoveAll(backup)
+		}
+		return nil
+	}
+	return replaceWebRootInPlace(src, dst)
+}
+
+// replaceWebRootInPlace 在 WEB_ROOT 内部先完整准备新文件,再以备份回滚方式替换现有条目。
+func replaceWebRootInPlace(src, dst string) error {
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
 	}
-	entries, err := os.ReadDir(dst)
+	stage, err := os.MkdirTemp(dst, ".fanke-web-new-*")
 	if err != nil {
 		return err
 	}
-	for _, e := range entries {
-		if err := os.RemoveAll(filepath.Join(dst, e.Name())); err != nil {
+	defer os.RemoveAll(stage)
+	if err := copyTree(src, stage); err != nil {
+		return err
+	}
+	backup, err := os.MkdirTemp(dst, ".fanke-web-bak-*")
+	if err != nil {
+		return err
+	}
+	stageName := filepath.Base(stage)
+	backupName := filepath.Base(backup)
+
+	existing, err := os.ReadDir(dst)
+	if err != nil {
+		_ = os.RemoveAll(backup)
+		return err
+	}
+	movedOld := make([]string, 0, len(existing))
+	rollback := func() {
+		// 清理本次已移入的新条目并还原旧条目
+		if cur, rerr := os.ReadDir(dst); rerr == nil {
+			for _, e := range cur {
+				if e.Name() == stageName || e.Name() == backupName {
+					continue
+				}
+				_ = os.RemoveAll(filepath.Join(dst, e.Name()))
+			}
+		}
+		for _, name := range movedOld {
+			_ = os.Rename(filepath.Join(backup, name), filepath.Join(dst, name))
+		}
+		_ = os.RemoveAll(backup)
+	}
+	for _, e := range existing {
+		name := e.Name()
+		if name == stageName || name == backupName {
+			continue
+		}
+		if err := os.Rename(filepath.Join(dst, name), filepath.Join(backup, name)); err != nil {
+			rollback()
+			return err
+		}
+		movedOld = append(movedOld, name)
+	}
+	newEntries, err := os.ReadDir(stage)
+	if err != nil {
+		rollback()
+		return err
+	}
+	for _, e := range newEntries {
+		name := e.Name()
+		if err := os.Rename(filepath.Join(stage, name), filepath.Join(dst, name)); err != nil {
+			rollback()
 			return err
 		}
 	}
-	return copyTree(src, dst)
+	_ = os.RemoveAll(backup)
+	return nil
 }
 
 func copyTree(src, dst string) error {

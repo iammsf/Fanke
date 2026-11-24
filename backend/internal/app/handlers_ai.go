@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"fanke/backend/internal/ai"
+	"fanke/backend/internal/netutil"
 	"fanke/backend/internal/repo"
 )
 
@@ -52,9 +54,16 @@ func (a *App) GetAIConnection(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, maskAIConnection(conn))
 }
 
+func (a *App) allowPrivateAIHosts() string {
+	if a.Cfg == nil {
+		return ""
+	}
+	return a.Cfg.AllowPrivateAIHosts
+}
+
 func (a *App) CreateAIConnection(w http.ResponseWriter, r *http.Request) {
 	var req repo.CreateAIConnection
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		a.fail(w, 400, "invalid json")
 		return
 	}
@@ -64,7 +73,7 @@ func (a *App) CreateAIConnection(w http.ResponseWriter, r *http.Request) {
 	if req.Name == "" {
 		req.Name = req.Model
 	}
-	if err := validateAIConnection(req.Name, req.GroupName, req.Provider, req.APIURL, req.APIKey, req.Model, req.Weight); err != nil {
+	if err := validateAIConnection(req.Name, req.GroupName, req.Provider, req.APIURL, req.APIKey, req.Model, req.Weight, a.allowPrivateAIHosts()); err != nil {
 		a.fail(w, 400, err.Error())
 		return
 	}
@@ -89,7 +98,7 @@ func (a *App) CreateAIConnections(w http.ResponseWriter, r *http.Request) {
 			Weight int    `json:"weight"`
 		} `json:"models"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		a.fail(w, 400, "invalid json")
 		return
 	}
@@ -118,7 +127,7 @@ func (a *App) CreateAIConnections(w http.ResponseWriter, r *http.Request) {
 			apiKey = k
 		}
 	}
-	if err := validateAIEndpoint(provider, apiURL, apiKey); err != nil {
+	if err := validateAIEndpoint(provider, apiURL, apiKey, a.allowPrivateAIHosts()); err != nil {
 		a.fail(w, 400, err.Error())
 		return
 	}
@@ -180,7 +189,7 @@ func (a *App) CreateAIConnections(w http.ResponseWriter, r *http.Request) {
 func (a *App) UpdateAIConnection(w http.ResponseWriter, r *http.Request) {
 	id := routeInt(r, "id")
 	var req repo.UpdateAIConnection
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		a.fail(w, 400, "invalid json")
 		return
 	}
@@ -200,7 +209,7 @@ func (a *App) UpdateAIConnection(w http.ResponseWriter, r *http.Request) {
 		}
 		req.Model = &v
 	}
-	if err := validateAIUpdate(req); err != nil {
+	if err := validateAIUpdate(req, a.allowPrivateAIHosts()); err != nil {
 		a.fail(w, 400, err.Error())
 		return
 	}
@@ -230,7 +239,7 @@ func (a *App) RenameAIGroup(w http.ResponseWriter, r *http.Request) {
 		From string `json:"from"`
 		To   string `json:"to"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		a.fail(w, 400, "invalid json")
 		return
 	}
@@ -277,7 +286,7 @@ func (a *App) CreateAIGroup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		a.fail(w, 400, "invalid json")
 		return
 	}
@@ -314,7 +323,7 @@ func (a *App) DeleteAIGroup(w http.ResponseWriter, r *http.Request) {
 		Action string `json:"action"`
 		Target string `json:"target"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		a.fail(w, 400, "invalid json")
 		return
 	}
@@ -466,7 +475,7 @@ func (a *App) ListAIModels(w http.ResponseWriter, r *http.Request) {
 		APIKey   string `json:"api_key"`
 		Group    string `json:"group"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		a.fail(w, 400, "invalid json")
 		return
 	}
@@ -490,12 +499,13 @@ func (a *App) ListAIModels(w http.ResponseWriter, r *http.Request) {
 		}
 		apiURL, apiKey = u, k
 	}
-	if err := validateAIEndpoint(provider, apiURL, apiKey); err != nil {
+	if err := validateAIEndpoint(provider, apiURL, apiKey, a.allowPrivateAIHosts()); err != nil {
 		a.fail(w, 400, err.Error())
 		return
 	}
 	models, err := a.AI.ListModels(r.Context(), provider, apiURL, apiKey)
 	if err != nil {
+		log.Printf("ai list models failed: %v", err)
 		a.fail(w, 502, "failed to query models")
 		return
 	}
@@ -504,7 +514,7 @@ func (a *App) ListAIModels(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) ChatWithAI(w http.ResponseWriter, r *http.Request) {
 	var req ai.ChatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		a.fail(w, 400, "invalid json")
 		return
 	}
@@ -518,7 +528,8 @@ func (a *App) ChatWithAI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		a.fail(w, 500, err.Error())
+		log.Printf("ai chat failed: %v", err)
+		a.fail(w, http.StatusBadGateway, "AI 请求失败，请检查模型配置或稍后重试")
 		return
 	}
 	writeJSON(w, 200, resp)
@@ -607,28 +618,30 @@ func validateAIName(name, label string) error {
 	return nil
 }
 
-func validateAIEndpoint(provider, rawURL, key string) error {
+func validateAIEndpoint(provider, rawURL, key, allowPrivateHosts string) error {
 	if strings.TrimSpace(provider) == "" || strings.TrimSpace(rawURL) == "" || strings.TrimSpace(key) == "" {
 		return errors.New("missing required fields")
 	}
 	if provider != "openai" && provider != "claude" {
 		return errors.New("provider must be openai or claude")
 	}
-	u, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	if _, err := netutil.ValidateURL(rawURL, allowPrivateHosts, false); err != nil {
+		if errors.Is(err, netutil.ErrForbiddenAddress) {
+			return errors.New("禁止访问内网/本机 AI 地址(如需连接内网自建服务请在 ALLOW_PRIVATE_AI_HOSTS 中放行)")
+		}
 		return errors.New("invalid API URL")
 	}
 	return nil
 }
 
-func validateAIConnection(name, group, provider, rawURL, key, model string, weight int) error {
+func validateAIConnection(name, group, provider, rawURL, key, model string, weight int, allowPrivateHosts string) error {
 	if strings.TrimSpace(name) == "" || strings.TrimSpace(model) == "" {
 		return errors.New("missing required fields")
 	}
 	if err := validateAIName(group, "分组名称"); err != nil {
 		return err
 	}
-	if err := validateAIEndpoint(provider, rawURL, key); err != nil {
+	if err := validateAIEndpoint(provider, rawURL, key, allowPrivateHosts); err != nil {
 		return err
 	}
 	if weight <= 0 {
@@ -637,7 +650,7 @@ func validateAIConnection(name, group, provider, rawURL, key, model string, weig
 	return nil
 }
 
-func validateAIUpdate(u repo.UpdateAIConnection) error {
+func validateAIUpdate(u repo.UpdateAIConnection, allowPrivateHosts string) error {
 	if u.Name != nil && strings.TrimSpace(*u.Name) == "" || u.Model != nil && strings.TrimSpace(*u.Model) == "" || u.APIURL != nil && strings.TrimSpace(*u.APIURL) == "" {
 		return errors.New("string fields must not be empty")
 	}
@@ -645,9 +658,10 @@ func validateAIUpdate(u repo.UpdateAIConnection) error {
 		return errors.New("provider must be openai or claude")
 	}
 	if u.APIURL != nil {
-		x := strings.TrimSpace(*u.APIURL)
-		parsed, err := url.Parse(x)
-		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		if _, err := netutil.ValidateURL(*u.APIURL, allowPrivateHosts, false); err != nil {
+			if errors.Is(err, netutil.ErrForbiddenAddress) {
+				return errors.New("禁止访问内网/本机 AI 地址(如需连接内网自建服务请在 ALLOW_PRIVATE_AI_HOSTS 中放行)")
+			}
 			return errors.New("invalid API URL")
 		}
 	}

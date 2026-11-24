@@ -20,6 +20,11 @@ import (
 // ApplyExtensionUpdate 在线更新插件:下载清单里的 zip、校验 sha256、替换插件目录。
 // 保留插件的 enabled/initialized 状态与 ext_data_* 数据表,不执行卸载。
 func (a *App) ApplyExtensionUpdate(w http.ResponseWriter, r *http.Request) {
+	if !a.updateMu.TryLock() {
+		a.fail(w, http.StatusConflict, "已有更新任务正在进行，请稍后重试")
+		return
+	}
+	defer a.updateMu.Unlock()
 	e, err := a.DB.ExtensionBySlug(r.Context(), chi.URLParam(r, "slug"))
 	if err != nil {
 		a.fail(w, http.StatusNotFound, "插件不存在")

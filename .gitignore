@@ -17,7 +17,7 @@ backend/bin/
 frontend-nuxt/node_modules/
 frontend-nuxt/.nuxt/
 frontend-nuxt/.output/
-frontend-nuxt/dist/
+frontend-nuxt/dist
 frontend-nuxt/nuxt-static.tar.gz
 frontend-nuxt/deploy.log
 

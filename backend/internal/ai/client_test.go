@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"fanke/backend/internal/repo"
@@ -65,4 +66,52 @@ func TestChatClaudeNormalizesURLAndPayload(t *testing.T) {
 
 func repoConn(apiURL string) repo.AIConnection {
 	return repo.AIConnection{APIURL: apiURL, APIKey: "secret", Model: "claude-test"}
+}
+
+func TestNewClientBlocksLoopbackByDefault(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]string{{"id": "local-model"}}})
+	}))
+	defer srv.Close()
+
+	if _, err := NewClient(nil).ListModels(context.Background(), "openai", srv.URL, "secret"); err == nil {
+		t.Fatal("default AI client must block loopback SSRF")
+	}
+	models, err := NewClientWithAllowlist(nil, "127.0.0.1").ListModels(context.Background(), "openai", srv.URL, "secret")
+	if err != nil {
+		t.Fatalf("whitelisted loopback AI client failed: %v", err)
+	}
+	if len(models) != 1 || models[0] != "local-model" {
+		t.Fatalf("models = %v", models)
+	}
+}
+
+func TestNewClientBlocksRedirectToMetadata(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://169.254.169.254/latest/meta-data/", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	// 即使放行了 127.0.0.1,重定向到未放行的云元数据地址也必须被拦截。
+	if _, err := NewClientWithAllowlist(nil, "127.0.0.1").ListModels(context.Background(), "openai", srv.URL, "secret"); err == nil {
+		t.Fatal("redirect to cloud metadata should be blocked")
+	}
+}
+
+func TestResponseErrorDoesNotLeakUpstreamBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("INTERNAL_SECRET_DIAGNOSTIC_PAYLOAD"))
+	}))
+	defer srv.Close()
+
+	_, err := NewClientWithAllowlist(nil, "127.0.0.1").chatOpenAI(context.Background(), repoConn(srv.URL), ChatRequest{
+		Messages: []Message{{Role: "user", Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("expected error on HTTP 500")
+	}
+	if strings.Contains(err.Error(), "INTERNAL_SECRET_DIAGNOSTIC_PAYLOAD") {
+		t.Fatalf("upstream response body leaked in error: %v", err)
+	}
 }

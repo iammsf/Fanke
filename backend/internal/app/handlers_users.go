@@ -45,8 +45,8 @@ func (a *App) CreateUserAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Email = strings.TrimSpace(req.Email)
 	req.Username = strings.TrimSpace(req.Username)
-	if req.Email == "" || !usernameRe.MatchString(req.Username) || len(req.Password) < 10 {
-		a.fail(w, http.StatusBadRequest, "邮箱/ID(2-40 字母数字_-)/密码(≥10 位) 不合法")
+	if req.Email == "" || !usernameRe.MatchString(req.Username) || len(req.Password) < 10 || len(req.Password) > auth.MaxPasswordBytes {
+		a.fail(w, http.StatusBadRequest, "邮箱/ID(2-40 字母数字_-)/密码(10-128 字节) 不合法")
 		return
 	}
 	if req.Role != "admin" && req.Role != "author" {
@@ -108,6 +108,10 @@ func (a *App) UpdateUserAdmin(w http.ResponseWriter, r *http.Request) {
 		a.failInternal(w, r, "update user", err)
 		return
 	}
+	if req.Role != "" {
+		_ = a.DB.RevokeUserSessions(r.Context(), id)
+	}
+	a.pwdCache.Delete(id)
 	a.publicCache.clear()
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -122,8 +126,8 @@ func (a *App) ResetUserPassword(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Password string `json:"password"`
 	}
-	if err := decodeJSON(r, &req); err != nil || len(req.Password) < 10 {
-		a.fail(w, http.StatusBadRequest, "密码至少 10 位")
+	if err := decodeJSON(r, &req); err != nil || len(req.Password) < 10 || len(req.Password) > auth.MaxPasswordBytes {
+		a.fail(w, http.StatusBadRequest, "密码长度须在 10-128 字节之间")
 		return
 	}
 	hash, err := auth.HashPassword(req.Password)
@@ -164,6 +168,8 @@ func (a *App) DeleteUserAdmin(w http.ResponseWriter, r *http.Request) {
 		a.failInternal(w, r, "delete user", err)
 		return
 	}
+	_ = a.DB.RevokeUserSessions(r.Context(), id)
+	a.pwdCache.Delete(id)
 	a.publicCache.clear()
 	w.WriteHeader(http.StatusNoContent)
 }

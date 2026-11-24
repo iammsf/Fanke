@@ -1,8 +1,10 @@
 <script setup lang="ts">
 // 公开布局:头部/页脚 + 设置加载 + 运行时主题 + 用户插件注入
 const { ensurePublic } = useExtensions()
+const { clear: clearTheme } = useThemeCss()
 if (import.meta.client) void ensurePublic()
 useSiteBoot(true)
+onBeforeUnmount(() => clearTheme('site'))
 </script>
 
 <template>

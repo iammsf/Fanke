@@ -570,11 +570,28 @@ func decodeExtUpdate(slug string, data []byte) (repo.ExtUpdate, error) {
 //	Fanke.isInit → 当前是否处于首次安装初始化流程;
 //	Fanke.slug → 插件 slug。
 const extBridgeScript = `<script>(function(){
+var target=(location.origin&&location.origin!=='null')?location.origin:'*';
 let seq=0;const pending=new Map();
 window.addEventListener('message',function(ev){
+  if(ev.source!==parent)return;
   var d=ev.data;if(!d||d.type!=='fanke:hook:result')return;
   var p=pending.get(d.id);if(!p)return;pending.delete(d.id);
   if(d.ok)p.resolve(d.data);else p.reject(new Error(d.error||'hook 调用失败'));
+});
+function reportHeight(){
+  if(!window.parent||window.parent===window)return;
+  var h=Math.max(
+    document.documentElement?document.documentElement.scrollHeight:0,
+    document.body?document.body.scrollHeight:0
+  );
+  if(h>0)parent.postMessage({type:'fanke:resize',height:h},target);
+}
+window.addEventListener('DOMContentLoaded',reportHeight);
+window.addEventListener('load',function(){
+  reportHeight();
+  if(typeof ResizeObserver!=='undefined'&&document.body){
+    new ResizeObserver(reportHeight).observe(document.body);
+  }
 });
 var q=new URLSearchParams(location.search);
 var parts=location.pathname.split('/');
@@ -583,10 +600,10 @@ window.Fanke={
   isInit:q.get('init')==='1',
   callHook:function(name,payload){return new Promise(function(resolve,reject){
     var id=++seq;pending.set(id,{resolve:resolve,reject:reject});
-    parent.postMessage({type:'fanke:hook',id:id,hook:name,payload:payload},location.origin);
+    parent.postMessage({type:'fanke:hook',id:id,hook:name,payload:payload},target);
   });},
-  initDone:function(){parent.postMessage({type:'fanke:init-done'},location.origin);},
-  emit:function(type,detail){parent.postMessage({type:'fanke:emit',ev:type,detail:detail},location.origin);}
+  initDone:function(){parent.postMessage({type:'fanke:init-done'},target);},
+  emit:function(type,detail){parent.postMessage({type:'fanke:emit',ev:type,detail:detail},target);}
 };
 })();</script>`
 
@@ -629,8 +646,16 @@ func (a *App) ServeExtensionPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	// 允许同源 iframe 嵌入(覆盖全局 X-Frame-Options: DENY);CSP frame-ancestors 对现代浏览器生效。
+	// 前端去除 allow-same-origin 后 iframe 为 opaque origin,'self' 不再匹配站点源,故追加显式 origin。
 	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: http:; connect-src 'self'; frame-ancestors 'self'")
+	originSrc := "'self'"
+	if origins := a.extensionPageOrigins(r); origins != "" {
+		originSrc = "'self' " + origins
+	}
+	w.Header().Set("Content-Security-Policy", fmt.Sprintf(
+		"default-src %s; script-src %s 'unsafe-inline'; style-src %s 'unsafe-inline'; img-src %s data: https: http:; connect-src %s; frame-ancestors 'self'",
+		originSrc, originSrc, originSrc, originSrc, originSrc,
+	))
 	_, _ = w.Write(data)
 }
 
@@ -670,6 +695,11 @@ func (a *App) serveExtensionFile(w http.ResponseWriter, r *http.Request, rest st
 	if err != nil || fi.IsDir() {
 		a.fail(w, http.StatusNotFound, "资源不存在")
 		return
+	}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	switch strings.ToLower(filepath.Ext(p)) {
+	case ".svg", ".html", ".htm":
+		w.Header().Set("Content-Security-Policy", "sandbox")
 	}
 	// 插件更新后必须立刻生效:代码文件只允许带 Last-Modified 回源校验(no-cache → 304),
 	// 否则浏览器会拿旧 editor.js 继续跑,后台看着已升级、编辑器行为却还是老版本。

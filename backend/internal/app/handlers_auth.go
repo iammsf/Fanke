@@ -30,7 +30,7 @@ func (a *App) setRefreshCookie(w http.ResponseWriter, token string, maxAge int) 
 	http.SetCookie(w, &http.Cookie{
 		Name:     refreshCookie,
 		Value:    token,
-		Path:     "/",
+		Path:     "/api/v1/auth",
 		HttpOnly: true,
 		Secure:   !a.Cfg.InsecureCookie,
 		SameSite: http.SameSiteLaxMode,
@@ -42,6 +42,10 @@ func (a *App) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginReq
 	if err := decodeJSON(r, &req); err != nil || req.Identifier == "" || req.Password == "" {
 		a.fail(w, http.StatusBadRequest, "identifier and password required")
+		return
+	}
+	if len(req.Password) > auth.MaxPasswordBytes {
+		a.fail(w, http.StatusBadRequest, "password too long")
 		return
 	}
 	u, err := a.DB.UserByEmailOrName(r.Context(), req.Identifier)
@@ -119,6 +123,10 @@ func (a *App) Refresh(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) Logout(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-Requested-With") != "fanke" {
+		a.fail(w, http.StatusForbidden, "missing X-Requested-With")
+		return
+	}
 	if ck, err := r.Cookie(refreshCookie); err == nil {
 		if claims, perr := a.Signer.Parse(ck.Value); perr == nil && claims.ID != "" {
 			_ = a.DB.RevokeRefreshToken(r.Context(), claims.ID)
@@ -145,8 +153,8 @@ func (a *App) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		Current  string `json:"current"`
 		Password string `json:"password"`
 	}
-	if err := decodeJSON(r, &req); err != nil || len(req.Password) < 10 {
-		a.fail(w, http.StatusBadRequest, "password must be at least 10 chars")
+	if err := decodeJSON(r, &req); err != nil || len(req.Password) < 10 || len(req.Password) > auth.MaxPasswordBytes || len(req.Current) > auth.MaxPasswordBytes {
+		a.fail(w, http.StatusBadRequest, "password must be 10-128 bytes")
 		return
 	}
 	u, err := a.DB.UserByID(r.Context(), currentUser(r).ID)

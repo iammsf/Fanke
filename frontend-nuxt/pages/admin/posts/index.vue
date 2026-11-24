@@ -23,19 +23,24 @@ const data = ref<Page<AdminPost> | null>(null)
 const loading = ref(true)
 const error = ref<any>(null)
 const busyIds = reactive(new Set<number>())
+let loadSeq = 0
 
 const load = async () => {
+  const my = ++loadSeq
   loading.value = true
   error.value = null
   const u = new URLSearchParams({ page: String(state.page), per: String(PER) })
   if (state.status) u.set('status', state.status)
   if (state.q) u.set('q', state.q)
   try {
-    data.value = await api<Page<AdminPost>>(`/admin/posts?${u}`)
+    const res = await api<Page<AdminPost>>(`/admin/posts?${u}`)
+    if (my !== loadSeq) return
+    data.value = res
   } catch (e: any) {
+    if (my !== loadSeq) return
     error.value = e
   } finally {
-    loading.value = false
+    if (my === loadSeq) loading.value = false
   }
 }
 onMounted(load)
@@ -77,6 +82,7 @@ const del = async (p: AdminPost) => {
     load()
   } catch (e: any) {
     push(e.message || '删除失败', false)
+  } finally {
     busyIds.delete(p.id)
   }
 }

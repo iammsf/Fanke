@@ -6,22 +6,64 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"fanke/backend/internal/buildinfo"
+	"fanke/backend/internal/netutil"
 )
 
 // updateProxyURL 可选的更新代理(设置 UPDATE_PROXY);空则直连。
 var updateProxyURL string
 
+// updateAllowInsecureHTTP 是否允许更新下载走明文 http://(由 ALLOW_INSECURE_UPDATE_HTTP=true 显式开启)。
+var updateAllowInsecureHTTP bool
+
 // ConfigureUpdateProxy 由 app.New 在启动时调用。
 func ConfigureUpdateProxy(proxy string) {
 	updateProxyURL = strings.TrimSpace(proxy)
+}
+
+// ConfigureUpdateHTTP 由 app.New 在启动时调用。
+func ConfigureUpdateHTTP(allow bool) {
+	updateAllowInsecureHTTP = allow
+}
+
+func allowInsecureUpdateHTTP() bool {
+	if updateAllowInsecureHTTP {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("ALLOW_INSECURE_UPDATE_HTTP")), "true")
+}
+
+// validUpdateURL 校验自更新/插件/主题下载地址:默认仅允许 https://(除非显式开启 ALLOW_INSECURE_UPDATE_HTTP=true),
+// 同时拒绝字面量内网/回环/云元数据地址。
+func validUpdateURL(raw string) error {
+	_, err := netutil.ValidateURL(raw, "", !allowInsecureUpdateHTTP())
+	return err
+}
+
+// updateManifestHTTPClient 更新清单回落客户端:不走环境代理,连接阶段拦截内网,重定向强制校验 validUpdateURL。
+var updateManifestHTTPClient = &http.Client{
+	Timeout: 10 * time.Second,
+	Transport: &http.Transport{
+		Proxy:               nil,
+		DialContext:         safeProbeDial,
+		TLSHandshakeTimeout: 5 * time.Second,
+		DisableKeepAlives:   true,
+	},
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= maxUpdateRedirects {
+			return errors.New("重定向次数过多")
+		}
+		return validUpdateURL(req.URL.String())
+	},
 }
 
 // DefaultUpdateManifestURL 更新清单默认地址(GitHub raw,无需代理即可访问)。
@@ -74,11 +116,32 @@ const maxUpdateRedirects = 4
 // 一条 https 的外部地址就能把请求引到内网(SSRF)。改成手动逐跳:每跳先过
 // validProbeURL,与已经加固过的 Go 探测路径口径一致。
 func curlToFile(ctx context.Context, target, dest string, max int64) error {
+	allowHTTP := allowInsecureUpdateHTTP()
 	for hop := 0; ; hop++ {
-		if err := validProbeURL(target); err != nil {
+		if err := validUpdateURL(target); err != nil {
 			return err
 		}
-		code, next, err := curlOnce(ctx, target, dest, max)
+		resolveArg := ""
+		if updateProxyURL == "" {
+			// 先在 Go 侧解析域名并校验所有 IP 非内网/元数据,再用 --resolve 钉死连接 IP 防 DNS 重绑定 SSRF。
+			host, port, safeIP, err := netutil.ResolveSafeIP(ctx, target, allowHTTP)
+			if err != nil {
+				return err
+			}
+			resolveArg = netutil.FormatCurlResolve(host, port, safeIP)
+		} else {
+			// 走代理时若本机 DNS 能解析出内网/回环 IP(如 localtest.me -> 127.0.0.1),同样直接拒绝。
+			if u, err := url.Parse(target); err == nil {
+				if ips, derr := net.DefaultResolver.LookupIPAddr(ctx, u.Hostname()); derr == nil {
+					for _, ip := range ips {
+						if isForbiddenProbeIP(ip.IP) {
+							return netutil.ErrForbiddenAddress
+						}
+					}
+				}
+			}
+		}
+		code, next, err := curlOnceOpts(ctx, target, dest, max, resolveArg, allowHTTP)
 		if err != nil {
 			return err
 		}
@@ -113,19 +176,37 @@ func curlToFile(ctx context.Context, target, dest string, max int64) error {
 
 // curlOnce 抓一跳:不带 -L,状态码与下一跳地址用 -w 打到 stdout 由调用方裁决。
 func curlOnce(ctx context.Context, target, dest string, max int64) (int, string, error) {
+	return curlOnceOpts(ctx, target, dest, max, "", true)
+}
+
+func buildCurlArgs(target, dest string, max int64, resolveArg string, allowHTTP bool, proxy string) []string {
+	proto := "=https"
+	if allowHTTP {
+		proto = "=http,https"
+	}
+	args := []string{
+		"-fsS", "-g", "--proto", proto, "--retry", "2", "--connect-timeout", "20", "--max-time", "900",
+		"--max-filesize", strconv.FormatInt(max+1, 10), "-o", dest,
+		"-w", "%{http_code}\n%{redirect_url}",
+	}
+	if resolveArg != "" {
+		args = append(args, "--resolve", resolveArg)
+	}
+	if proxy != "" {
+		args = append(args, "--proxy", proxy)
+	} else {
+		args = append(args, "--noproxy", "*")
+	}
+	args = append(args, "--", target)
+	return args
+}
+
+func curlOnceOpts(ctx context.Context, target, dest string, max int64, resolveArg string, allowHTTP bool) (int, string, error) {
 	curl, err := exec.LookPath("curl")
 	if err != nil {
 		return 0, "", err
 	}
-	args := []string{
-		"-fsS", "--retry", "2", "--connect-timeout", "20", "--max-time", "900",
-		"--max-filesize", strconv.FormatInt(max+1, 10), "-o", dest,
-		"-w", "%{http_code}\n%{redirect_url}",
-	}
-	if updateProxyURL != "" {
-		args = append(args, "--proxy", updateProxyURL)
-	}
-	args = append(args, target)
+	args := buildCurlArgs(target, dest, max, resolveArg, allowHTTP, updateProxyURL)
 	// -w 走 stdout,curl 的错误信息走 stderr,不能混在一起截。
 	out, err := exec.CommandContext(ctx, curl, args...).Output()
 	if err != nil {
@@ -155,9 +236,9 @@ func absoluteURL(base, ref string) (string, error) {
 	return b.ResolveReference(r).String(), nil
 }
 
-// fetchUpdateJSON 优先用 curl(可走代理),失败再回落到 Go 探测客户端。
+// fetchUpdateJSON 优先用 curl(可走代理),失败再回落到 Go 更新探测客户端。
 func fetchUpdateJSON(ctx context.Context, url string) ([]byte, error) {
-	if err := validProbeURL(url); err != nil {
+	if err := validUpdateURL(url); err != nil {
 		return nil, err
 	}
 	tmp, err := os.CreateTemp("", "fanke-manifest-*")
@@ -169,6 +250,8 @@ func fetchUpdateJSON(ctx context.Context, url string) ([]byte, error) {
 			if data, err := os.ReadFile(name); err == nil && len(data) <= manifestMaxBytes {
 				return data, nil
 			}
+		} else if errors.Is(err, netutil.ErrForbiddenAddress) {
+			return nil, err
 		}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -176,7 +259,7 @@ func fetchUpdateJSON(ctx context.Context, url string) ([]byte, error) {
 		return nil, errors.New("更新地址非法")
 	}
 	req.Header.Set("User-Agent", "fanke-updater/1.0")
-	resp, err := probeHTTPClient.Do(req)
+	resp, err := updateManifestHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
