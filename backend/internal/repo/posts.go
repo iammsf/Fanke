@@ -423,6 +423,45 @@ func (db *DB) termsForPosts(ctx context.Context, ids []int64) (map[int64][]Term,
 	return out, rows.Err()
 }
 
+func adjacentPostSQL(before bool) string {
+	op := ">"
+	dir := "ASC"
+	if before {
+		op = "<"
+		dir = "DESC"
+	}
+	return `SELECT slug, title FROM posts
+		WHERE status = 'published' AND is_public = TRUE
+		  AND (COALESCE(published_at, created_at), id) ` + op + ` ($1, $2)
+		ORDER BY COALESCE(published_at, created_at) ` + dir + `, id ` + dir + `
+		LIMIT 1`
+}
+
+func (db *DB) adjacentPublicPost(ctx context.Context, before bool, postID int64, refTime time.Time) (*PostNavItem, error) {
+	var item PostNavItem
+	err := db.QueryRow(ctx, adjacentPostSQL(before), refTime, postID).Scan(&item.Slug, &item.Title)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+// AdjacentPublicPosts 返回公开已发布文章的相邻两篇（prev 为更早一篇，next 为更新一篇）。
+func (db *DB) AdjacentPublicPosts(ctx context.Context, postID int64, refTime time.Time) (prev, next *PostNavItem, err error) {
+	prev, err = db.adjacentPublicPost(ctx, true, postID, refTime)
+	if err != nil {
+		return nil, nil, err
+	}
+	next, err = db.adjacentPublicPost(ctx, false, postID, refTime)
+	if err != nil {
+		return nil, nil, err
+	}
+	return prev, next, nil
+}
+
 func itoa(n int) string {
 	if n == 0 {
 		return "0"

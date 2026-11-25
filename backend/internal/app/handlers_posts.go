@@ -195,11 +195,25 @@ func (a *App) GetPost(w http.ResponseWriter, r *http.Request) {
 	a.enrichPostImages(r.Context(), p)
 	out := map[string]any{"post": p, "comments": n}
 	if p.IsPublic {
+		prev, next, err := a.DB.AdjacentPublicPosts(r.Context(), p.ID, postRefTime(p))
+		if err != nil {
+			log.Printf("adjacent posts lookup failed: %v", err)
+		} else {
+			out["prev"] = prev
+			out["next"] = next
+		}
 		writeJSONCached(w, r, http.StatusOK, out)
 		return
 	}
-	// 草稿预览:响应带登录态,绝不能进入公共缓存/CDN。
+	// 草稿预览:响应带登录态,绝不能进入公共缓存/CDN,且不返回邻篇。
 	writeJSON(w, http.StatusOK, out)
+}
+
+func postRefTime(p *repo.Post) time.Time {
+	if p.PublishedAt != nil {
+		return *p.PublishedAt
+	}
+	return p.CreatedAt
 }
 
 // enrichPostImages 只在读取接口改写 HTML，不落库。

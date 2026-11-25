@@ -38,6 +38,11 @@ export interface Post extends PostSummary {
   cover_url?: string
 }
 
+export interface PostNavItem {
+  slug: string
+  title: string
+}
+
 export interface CommentItem {
   id: number
   post_id: number

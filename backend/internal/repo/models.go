@@ -42,6 +42,12 @@ type Post struct {
 	Terms        []Term     `json:"terms,omitempty"`
 }
 
+// PostNavItem 表示文章详情页上一篇/下一篇导航项的最小公开字段。
+type PostNavItem struct {
+	Slug  string `json:"slug"`
+	Title string `json:"title"`
+}
+
 type Term struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`

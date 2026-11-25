@@ -3,6 +3,7 @@ import type {
   CommentItem,
   Page,
   Post,
+  PostNavItem,
   PostSummary,
   SetupStatus,
   SiteSettings,
@@ -78,7 +79,9 @@ export function usePublicApi() {
       return result
     },
     post: (slug: string) =>
-      getWithStatus<{ post: Post; comments: number }>(`/posts/${encodeURIComponent(slug)}`),
+      getWithStatus<{ post: Post; comments: number; prev?: PostNavItem | null; next?: PostNavItem | null }>(
+        `/posts/${encodeURIComponent(slug)}`,
+      ),
     terms: (type: 'category' | 'tag') => get<TermWithCount[]>(`/terms?type=${type}`),
     settings: () => get<SiteSettings>('/settings'),
     comments: (slug: string) =>

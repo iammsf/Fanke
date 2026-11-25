@@ -1,0 +1,9 @@
+{
+  "slug": "sujian-editorial",
+  "name": "素笺 · Editorial",
+  "version": "1.0.0",
+  "date": "2026-11-25",
+  "author": "Fanke UI",
+  "description": "东方纸墨杂志编辑风文章页主主题：宣纸暖白与沉墨夜读双色、编辑级长文排版、毛玻璃顶栏与柔和微交互。",
+  "targets": ["site"]
+}

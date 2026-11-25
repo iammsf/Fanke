@@ -4,6 +4,26 @@
 
 ---
 
+## 2026.11.25
+
+### 前端与主题
+
+- **新增「素笺 · Editorial」文章页主主题包**（`themes/sujian-editorial/{info.json,site.css}`）：
+  - 东方纸墨杂志编辑风，支持宣纸暖白（`#f7f4ee` / `#fffdf9` + 黛青 `#2c5e50`）与沉墨夜读（`#141618` / `#1c1f23` + 浅松石青 `#6fb39c`）双色自动切换，含 Element Plus 变量桥接；
+  - 精雕 `.post-full`（`max-width: 820px`）、`.prose` 正文排版节奏、毛玻璃顶栏、首页卡片渐变蒙版与 `640/768/1024` 响应式断点及 `prefers-reduced-motion` 无障碍支持，可在后台「外观」一键启用。
+- **文章页阅读体验增强**（`frontend-nuxt/pages/posts/[slug].vue`）：
+  - 新增顶部 2px 阅读进度条（`.reading-progress`）；
+  - 新增桌面端宽屏（`>= 1280px`）右侧浮动目录（`.post-toc`），自动提取正文 `h2/h3`（>= 2 个时显示）并通过 `IntersectionObserver` 高亮当前章节；
+  - 新增文末「上一篇 / 下一篇」邻篇导航卡（`.post-nav`），并监听 `route.params.slug` 变化以在同路由切换文章时自动刷新内容与状态。
+
+### 后端
+
+- **文章详情接口新增邻篇导航**（`GET /api/v1/posts/{slug}`）：
+  - `repo` 新增 `PostNavItem` 与 `AdjacentPublicPosts`，按 `(COALESCE(published_at, created_at), id)` 严格仅在 `status = 'published' AND is_public = TRUE` 的公开文章中查询上一篇（`prev`）与下一篇（`next`）；
+  - 公开文章响应新增 `prev`、`next` 字段（`{slug, title}` 或 `null`），未公开草稿预览不返回邻篇。
+
+---
+
 ## 2026.11.17
 
 ### 插件
